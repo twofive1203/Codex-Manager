@@ -691,6 +691,7 @@ pub(in super::super) struct AggregateProxyRequest<'a> {
     pub storage: &'a Storage,
     pub trace_id: &'a str,
     pub key_id: &'a str,
+    pub client_ip: Option<&'a str>,
     pub original_path: &'a str,
     pub path: &'a str,
     pub request_method: &'a str,
@@ -714,6 +715,7 @@ pub(in super::super) fn proxy_aggregate_request(
         storage,
         trace_id,
         key_id,
+        client_ip,
         original_path,
         path,
         request_method,
@@ -804,6 +806,7 @@ pub(in super::super) fn proxy_aggregate_request(
                     storage,
                     super::super::super::request_log::RequestLogTraceContext {
                         trace_id: Some(trace_id),
+                        client_ip,
                         original_path: Some(original_path),
                         adapted_path: Some(path),
                         response_adapter: Some(response_adapter),
@@ -1018,6 +1021,7 @@ pub(in super::super) fn proxy_aggregate_request(
                 storage,
                 super::super::super::request_log::RequestLogTraceContext {
                     trace_id: Some(trace_id),
+                    client_ip,
                     original_path: Some(original_path),
                     adapted_path: Some(path),
                     response_adapter: Some(response_adapter),
@@ -1078,6 +1082,7 @@ pub(in super::super) fn proxy_aggregate_request(
         storage,
         super::super::super::request_log::RequestLogTraceContext {
             trace_id: Some(trace_id),
+            client_ip,
             original_path: Some(original_path),
             adapted_path: Some(path),
             response_adapter: Some(response_adapter),

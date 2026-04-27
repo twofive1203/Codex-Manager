@@ -7,10 +7,13 @@ mod auth;
 mod io;
 mod request;
 
+pub(crate) use io::extract_request_client_ip;
+
 pub(super) struct LocalValidationResult {
     pub(super) trace_id: String,
     pub(super) incoming_headers: super::IncomingHeaderSnapshot,
     pub(super) storage: crate::storage_helpers::StorageHandle,
+    pub(super) client_ip: Option<String>,
     pub(super) original_path: String,
     pub(super) path: String,
     pub(super) body: Bytes,

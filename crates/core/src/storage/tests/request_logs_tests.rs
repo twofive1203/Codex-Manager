@@ -102,6 +102,7 @@ fn insert_request_log_with_token_stat_is_visible_via_join() {
         trace_id: Some("trc-1".to_string()),
         key_id: Some("gk_1".to_string()),
         account_id: Some("acc_1".to_string()),
+        client_ip: Some("1.2.3.4".to_string()),
         initial_account_id: Some("acc_1".to_string()),
         attempted_account_ids_json: Some(r#"["acc_1"]"#.to_string()),
         request_path: "/v1/responses".to_string(),
@@ -156,6 +157,7 @@ fn insert_request_log_with_token_stat_is_visible_via_join() {
     assert_eq!(logs.len(), 1);
     let row = &logs[0];
     assert_eq!(row.trace_id.as_deref(), Some("trc-1"));
+    assert_eq!(row.client_ip.as_deref(), Some("1.2.3.4"));
     assert_eq!(row.initial_account_id.as_deref(), Some("acc_1"));
     assert_eq!(
         row.attempted_account_ids_json.as_deref(),
@@ -289,6 +291,7 @@ fn request_logs_support_backend_pagination_and_status_filters() {
                 trace_id: Some(format!("trc-{index}")),
                 key_id: Some("gk-log".to_string()),
                 account_id: Some("acc-log".to_string()),
+                client_ip: Some(format!("10.0.0.{}", index + 1)),
                 initial_account_id: Some("acc-log".to_string()),
                 attempted_account_ids_json: Some(r#"["acc-log"]"#.to_string()),
                 request_path: format!("/v1/responses/{index}"),
@@ -342,6 +345,12 @@ fn request_logs_support_backend_pagination_and_status_filters() {
         .count_request_logs(None, Some("5xx"), None, None)
         .expect("count 5xx logs");
     assert_eq!(total_5xx, 2);
+
+    let ip_filtered = storage
+        .list_request_logs(Some("ip:=10.0.0.5"), 10)
+        .expect("filter by client ip");
+    assert_eq!(ip_filtered.len(), 1);
+    assert_eq!(ip_filtered[0].trace_id.as_deref(), Some("trc-4"));
 }
 
 /// 函数 `request_logs_filtered_summary_aggregates_counts_and_tokens`

@@ -1220,6 +1220,7 @@ pub(super) fn build_local_validation_result(
     api_key: ApiKey,
 ) -> Result<LocalValidationResult, LocalValidationError> {
     // 按当前策略取消每次请求都更新 api_keys.last_used_at，减少并发写入冲突。
+    let client_ip = super::io::extract_request_client_ip(request);
     let normalized_path = super::super::normalize_models_path(request.url());
     if is_removed_openai_compat_request_path(normalized_path.as_str()) {
         return Err(LocalValidationError::new(
@@ -1314,6 +1315,7 @@ pub(super) fn build_local_validation_result(
             trace_id,
             incoming_headers,
             storage,
+            client_ip,
             original_path: normalized_path.clone(),
             path: normalized_path,
             body: Bytes::from(rewritten_body),
@@ -1561,6 +1563,7 @@ pub(super) fn build_local_validation_result(
         trace_id,
         incoming_headers,
         storage,
+        client_ip,
         original_path: normalized_path,
         path,
         body: Bytes::from(body),

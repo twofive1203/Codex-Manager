@@ -55,6 +55,7 @@ pub(super) fn maybe_respond_local_models(
     request: tiny_http::Request,
     trace_id: &str,
     key_id: &str,
+    client_ip: Option<&str>,
     protocol_type: &str,
     original_path: &str,
     path: &str,
@@ -72,6 +73,7 @@ pub(super) fn maybe_respond_local_models(
     let context = super::local_response::LocalResponseContext {
         trace_id,
         key_id,
+        client_ip,
         protocol_type,
         original_path,
         path,

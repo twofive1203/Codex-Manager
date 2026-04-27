@@ -94,4 +94,13 @@ fn prefixed_request_type_and_service_tier_queries_are_supported() {
             value
         } if value == "priority"
     ));
+
+    let client_ip_query = parse_request_log_query(Some("ip:=1.2.3.4"));
+    assert!(matches!(
+        client_ip_query,
+        RequestLogQuery::FieldExact {
+            column: "client_ip",
+            value
+        } if value == "1.2.3.4"
+    ));
 }

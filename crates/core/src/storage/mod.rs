@@ -118,6 +118,7 @@ pub struct RequestLog {
     pub trace_id: Option<String>,
     pub key_id: Option<String>,
     pub account_id: Option<String>,
+    pub client_ip: Option<String>,
     pub initial_account_id: Option<String>,
     pub attempted_account_ids_json: Option<String>,
     pub initial_aggregate_api_id: Option<String>,
@@ -668,6 +669,11 @@ impl Storage {
             include_str!("../../migrations/052_account_subscriptions.sql"),
             |s| s.ensure_account_subscriptions_table(),
         )?;
+        self.apply_sql_or_compat_migration(
+            "053_request_logs_client_ip",
+            include_str!("../../migrations/053_request_logs_client_ip.sql"),
+            |s| s.ensure_request_log_client_ip_column(),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_secrets_table()?;
@@ -676,6 +682,7 @@ impl Storage {
         self.ensure_request_log_request_type_and_service_tier_columns()?;
         self.ensure_request_log_effective_service_tier_column()?;
         self.ensure_request_log_first_response_column()?;
+        self.ensure_request_log_client_ip_column()?;
         self.ensure_model_catalog_models_table()?;
         self.ensure_account_subscriptions_table()?;
         Ok(())

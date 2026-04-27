@@ -1133,22 +1133,53 @@ function RequestRouteInfoCell({ log }: { log: RequestLog }) {
  * # 返回
  * 返回函数执行结果
  */
-function ErrorInfoCell({ error }: { error: string }) {
+function ErrorInfoCell({
+  error,
+  clientIp,
+  showClientIp,
+}: {
+  error: string;
+  clientIp: string;
+  showClientIp: boolean;
+}) {
+  const { t } = useI18n();
   const text = String(error || "").trim();
-  if (!text) {
+  const normalizedClientIp = String(clientIp || "").trim();
+  if (!text && !showClientIp) {
     return <span className="text-muted-foreground">-</span>;
   }
 
   return (
     <Tooltip>
       <TooltipTrigger render={<div />} className="block text-left">
-        <span className="block max-w-[220px] truncate font-medium text-red-400">
-          {text}
-        </span>
+        {text ? (
+          <span className="block max-w-[220px] truncate font-medium text-red-400">
+            {text}
+          </span>
+        ) : (
+          <span className="block max-w-[220px] truncate font-medium text-amber-500">
+            {showClientIp ? "来源 IP 已记录" : "-"}
+          </span>
+        )}
+        {showClientIp ? (
+          <span className="mt-1 block max-w-[220px] truncate font-mono text-[11px] text-muted-foreground">
+            {normalizedClientIp ? `IP ${normalizedClientIp}` : "IP -"}
+          </span>
+        ) : null}
       </TooltipTrigger>
       <TooltipContent className="max-w-md">
-        <div className="max-w-[360px] break-all font-mono text-[11px]">
-          {text}
+        <div className="flex max-w-[360px] flex-col gap-2">
+          {text ? (
+            <div className="break-all font-mono text-[11px]">{text}</div>
+          ) : null}
+          {showClientIp ? (
+            <div className="space-y-0.5">
+              <div className="text-[10px] text-background/70">{t("来源 IP")}</div>
+              <div className="break-all font-mono text-[11px]">
+                {normalizedClientIp || "-"}
+              </div>
+            </div>
+          ) : null}
         </div>
       </TooltipContent>
     </Tooltip>
@@ -1714,7 +1745,7 @@ function LogsPageContent() {
               <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-center">
                 <div className="min-w-0">
                   <Input
-                    placeholder={t("搜索路径、账号或密钥...")}
+                    placeholder={t("搜索路径、账号、密钥或IP...")}
                     className="glass-card h-10 rounded-xl px-3"
                     value={search}
                     onChange={(event) => {
@@ -1924,8 +1955,8 @@ function LogsPageContent() {
                 <TableHead className="w-[168px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                   {t("Token / 费用")}
                 </TableHead>
-                <TableHead className="w-[240px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
-                  {t("错误")}
+                <TableHead className="w-[260px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                  {t("错误 / 来源IP")}
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -1971,11 +2002,17 @@ function LogsPageContent() {
                   </TableCell>
                 </TableRow>
               ) : (
-                logs.map((log: RequestLog) => (
-                  <TableRow
-                    key={log.id}
-                    className="group text-xs hover:bg-muted/20"
-                  >
+                logs.map((log: RequestLog) => {
+                  const displayedStatusCode = resolveDisplayedStatusCode(log);
+                  const showClientIp =
+                    Boolean(String(log.error || "").trim()) ||
+                    (displayedStatusCode != null && displayedStatusCode >= 400);
+
+                  return (
+                    <TableRow
+                      key={log.id}
+                      className="group text-xs hover:bg-muted/20"
+                    >
                     <TableCell className="px-4 py-3 font-mono text-[11px] text-muted-foreground">
                       {formatTsFromSeconds(log.createdAt, t("未知时间"))}
                     </TableCell>
@@ -1998,7 +2035,7 @@ function LogsPageContent() {
                       <ModelEffortCell log={log} />
                     </TableCell>
                     <TableCell className="px-4 py-3 align-top">
-                      {getStatusBadge(resolveDisplayedStatusCode(log))}
+                      {getStatusBadge(displayedStatusCode)}
                     </TableCell>
                     <TableCell className="px-4 py-3 align-top font-mono">
                       <span
@@ -2024,10 +2061,15 @@ function LogsPageContent() {
                       </div>
                     </TableCell>
                     <TableCell className="px-4 py-3 text-left align-top">
-                      <ErrorInfoCell error={log.error} />
+                      <ErrorInfoCell
+                        error={log.error}
+                        clientIp={log.clientIp}
+                        showClientIp={showClientIp}
+                      />
                     </TableCell>
-                  </TableRow>
-                ))
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
