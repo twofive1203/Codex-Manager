@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Copy,
   Database,
+  DollarSign,
   RefreshCw,
   Shield,
   Trash2,
@@ -229,8 +230,8 @@ function LogsPageSkeleton() {
   return (
     <div className="space-y-5">
       <Skeleton className="h-28 w-full rounded-3xl" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, index) => (
           <Skeleton key={index} className="h-32 w-full rounded-3xl" />
         ))}
       </div>
@@ -322,6 +323,36 @@ function formatTableTokenAmount(value: number | null | undefined): string {
   }
   const normalized = Math.max(0, value);
   return Math.round(normalized).toLocaleString("zh-CN");
+}
+
+/**
+ * 函数 `formatUsdAmount`
+ *
+ * 作者: gaohongshun
+ *
+ * 时间: 2026-04-27
+ *
+ * # 参数
+ * - value: 参数 value
+ * - fallback: 参数 fallback
+ *
+ * # 返回
+ * 返回格式化后的美元金额
+ */
+function formatUsdAmount(
+  value: number | null | undefined,
+  fallback = "$0.00",
+): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  const normalized = Math.max(0, value);
+  const maximumFractionDigits =
+    normalized >= 1 ? 2 : normalized >= 0.01 ? 4 : 6;
+  return `$${normalized.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits,
+  })}`;
 }
 
 /**
@@ -1509,6 +1540,7 @@ function LogsPageContent() {
     successCount: 0,
     errorCount: 0,
     totalTokens: 0,
+    totalCostUsd: 0,
   };
   const totalPages = Math.max(
     1,
@@ -1814,7 +1846,7 @@ function LogsPageContent() {
             </CardContent>
           </Card>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <SummaryCard
               title={t("当前结果")}
               value={`${summary.filteredCount}`}
@@ -1843,6 +1875,13 @@ function LogsPageContent() {
               icon={Database}
               toneClass="bg-amber-500/12 text-amber-500"
             />
+            <SummaryCard
+              title={t("累计费用")}
+              value={formatUsdAmount(summary.totalCostUsd)}
+              description={t("当前筛选结果中的累计费用")}
+              icon={DollarSign}
+              toneClass="bg-emerald-500/12 text-emerald-500"
+            />
           </div>
 
           <Card className="glass-card overflow-hidden border-none gap-0 py-0 shadow-xl backdrop-blur-md">
@@ -1861,7 +1900,7 @@ function LogsPageContent() {
               </div>
             </CardHeader>
             <CardContent className="px-0">
-              <Table className="min-w-[1320px] table-fixed">
+              <Table className="min-w-[1380px] table-fixed">
             <TableHeader>
               <TableRow>
                 <TableHead className="h-12 w-[150px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
@@ -1882,8 +1921,8 @@ function LogsPageContent() {
                 <TableHead className="w-[128px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                   {t("用时 / 首响")}
                 </TableHead>
-                <TableHead className="w-[148px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
-                  {t("Token")}
+                <TableHead className="w-[168px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                  {t("Token / 费用")}
                 </TableHead>
                 <TableHead className="w-[240px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                   {t("错误")}
@@ -1973,6 +2012,9 @@ function LogsPageContent() {
                     <TableCell className="px-4 py-3 align-top">
                       <div className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
                         <span>{t("总")} {formatTableTokenAmount(log.totalTokens)}</span>
+                        <span className="font-medium text-emerald-600">
+                          {t("费用")} {formatUsdAmount(log.estimatedCostUsd, "-")}
+                        </span>
                         <span>
                           {t("输入")} {formatTableTokenAmount(log.inputTokens)}
                         </span>
