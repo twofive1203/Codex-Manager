@@ -74,6 +74,83 @@ type LogsTab = "requests" | "gateway-errors";
 type TimeRangePreset = "all" | "30m" | "2h" | "24h" | "today" | "custom";
 type TranslateFn = (message: string, values?: Record<string, string | number>) => string;
 
+type ModelPricePer1K = {
+  input: number;
+  cachedInput: number;
+  output: number;
+};
+
+type TokenCostBreakdown = {
+  inputPer1K: number;
+  cachedInputPer1K: number;
+  outputPer1K: number;
+  inputPerMillion: number;
+  cachedInputPerMillion: number;
+  outputPerMillion: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  billableInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  estimatedCostUsd: number;
+};
+
+const MODEL_PRICE_PER_1K_TOKENS: ReadonlyArray<[string, number, number, number]> = [
+  ["gpt-5.5-pro", 0.03, 0.03, 0.18],
+  ["gpt-5.5", 0.005, 0.0005, 0.03],
+  ["gpt-5.4-mini", 0.00075, 0.000075, 0.0045],
+  ["gpt-5.4-nano", 0.0002, 0.00002, 0.00125],
+  ["gpt-5.4-pro", 0.03, 0.03, 0.18],
+  ["gpt-5.4", 0.0025, 0.00025, 0.015],
+  ["gpt-5.3-codex", 0.00175, 0.000175, 0.014],
+  ["gpt-5.2-pro", 0.021, 0.021, 0.168],
+  ["gpt-5.2-chat-latest", 0.00175, 0.000175, 0.014],
+  ["gpt-5.2-codex", 0.00175, 0.000175, 0.014],
+  ["gpt-5.2", 0.00175, 0.000175, 0.014],
+  ["gpt-5.1-codex-mini", 0.00025, 0.000025, 0.002],
+  ["gpt-5-codex-mini", 0.00025, 0.000025, 0.002],
+  ["gpt-5.1-codex-max", 0.00125, 0.000125, 0.01],
+  ["gpt-5.1-chat-latest", 0.00125, 0.000125, 0.01],
+  ["gpt-5.1-codex", 0.00125, 0.000125, 0.01],
+  ["gpt-5.1", 0.00125, 0.000125, 0.01],
+  ["gpt-5-mini", 0.00025, 0.000025, 0.002],
+  ["gpt-5-nano", 0.00005, 0.000005, 0.0004],
+  ["gpt-5-pro", 0.015, 0.015, 0.12],
+  ["gpt-5-chat-latest", 0.00125, 0.000125, 0.01],
+  ["gpt-5-codex", 0.00125, 0.000125, 0.01],
+  ["gpt-5", 0.00125, 0.000125, 0.01],
+  ["gpt-4.1-nano", 0.0001, 0.000025, 0.0004],
+  ["gpt-4.1-mini", 0.0004, 0.0001, 0.0016],
+  ["gpt-4.1", 0.002, 0.0005, 0.008],
+  ["gpt-4o-mini", 0.00015, 0.000075, 0.0006],
+  ["gpt-4o-2024-05-13", 0.005, 0.005, 0.015],
+  ["gpt-4o", 0.0025, 0.00125, 0.01],
+  ["gpt-realtime-mini", 0.0006, 0.00006, 0.0024],
+  ["gpt-realtime", 0.004, 0.0004, 0.016],
+  ["gpt-4o-mini-realtime-preview", 0.0006, 0.0003, 0.0024],
+  ["gpt-4o-realtime-preview", 0.005, 0.0025, 0.02],
+  ["gpt-audio-mini", 0.0006, 0.0006, 0.0024],
+  ["gpt-audio", 0.0025, 0.0025, 0.01],
+  ["gpt-4o-mini-audio-preview", 0.00015, 0.00015, 0.0006],
+  ["gpt-4o-audio-preview", 0.0025, 0.0025, 0.01],
+  ["gpt-image-2", 0.008, 0.002, 0.03],
+  ["gpt-image-1.5", 0.008, 0.002, 0.032],
+  ["gpt-image-1-mini", 0.0025, 0.00025, 0.008],
+  ["gpt-4", 0.03, 0.03, 0.06],
+  ["o4-mini-deep-research", 0.002, 0.0005, 0.008],
+  ["o4-mini", 0.0011, 0.000275, 0.0044],
+  ["o3-deep-research", 0.01, 0.0025, 0.04],
+  ["o3-pro", 0.02, 0.02, 0.08],
+  ["o3-mini", 0.0011, 0.00055, 0.0044],
+  ["o3", 0.002, 0.0005, 0.008],
+  ["o1-pro", 0.15, 0.15, 0.6],
+  ["o1-mini", 0.0011, 0.00055, 0.0044],
+  ["o1", 0.015, 0.0075, 0.06],
+  ["claude-3-7", 0.003, 0.003, 0.015],
+  ["claude-3-5", 0.003, 0.003, 0.015],
+  ["claude-3", 0.003, 0.003, 0.015],
+];
+
 function padDateTimeSegment(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -353,6 +430,174 @@ function formatUsdAmount(
     minimumFractionDigits: 2,
     maximumFractionDigits,
   })}`;
+}
+
+/**
+ * 函数 `formatPreciseUsdAmount`
+ *
+ * 作者: gaohongshun
+ *
+ * 时间: 2026-04-27
+ *
+ * # 参数
+ * - value: 参数 value
+ *
+ * # 返回
+ * 返回保留六位小数的美元金额
+ */
+function formatPreciseUsdAmount(value: number): string {
+  return `$${Math.max(0, value).toFixed(6)}`;
+}
+
+/**
+ * 函数 `formatUsdRatePerMillion`
+ *
+ * 作者: gaohongshun
+ *
+ * 时间: 2026-04-27
+ *
+ * # 参数
+ * - valuePerMillion: 参数 valuePerMillion
+ *
+ * # 返回
+ * 返回每百万 Token 的美元单价文本
+ */
+function formatUsdRatePerMillion(valuePerMillion: number): string {
+  return `${formatPreciseUsdAmount(valuePerMillion)} / 1M tokens`;
+}
+
+/**
+ * 函数 `resolveModelPricePer1K`
+ *
+ * 作者: gaohongshun
+ *
+ * 时间: 2026-04-27
+ *
+ * # 参数
+ * - normalizedModel: 参数 normalizedModel
+ * - inputTokensTotal: 参数 inputTokensTotal
+ *
+ * # 返回
+ * 返回与后端一致的每 1K Token 计费单价
+ */
+function resolveModelPricePer1K(
+  normalizedModel: string,
+  inputTokensTotal: number,
+): ModelPricePer1K | null {
+  if (normalizedModel.startsWith("gpt-5.5-pro")) {
+    return inputTokensTotal >= 270_000
+      ? { input: 0.06, cachedInput: 0.06, output: 0.27 }
+      : { input: 0.03, cachedInput: 0.03, output: 0.18 };
+  }
+  if (normalizedModel === "gpt-5.5") {
+    return inputTokensTotal >= 270_000
+      ? { input: 0.01, cachedInput: 0.001, output: 0.045 }
+      : { input: 0.005, cachedInput: 0.0005, output: 0.03 };
+  }
+  if (normalizedModel.startsWith("gpt-5.4-pro")) {
+    return inputTokensTotal >= 270_000
+      ? { input: 0.06, cachedInput: 0.06, output: 0.27 }
+      : { input: 0.03, cachedInput: 0.03, output: 0.18 };
+  }
+  if (normalizedModel === "gpt-5.4") {
+    return inputTokensTotal >= 270_000
+      ? { input: 0.005, cachedInput: 0.0005, output: 0.0225 }
+      : { input: 0.0025, cachedInput: 0.00025, output: 0.015 };
+  }
+
+  const matched = MODEL_PRICE_PER_1K_TOKENS.find(([prefix]) =>
+    normalizedModel.startsWith(prefix),
+  );
+  if (!matched) {
+    return null;
+  }
+  const [, input, cachedInput, output] = matched;
+  return { input, cachedInput, output };
+}
+
+/**
+ * 函数 `buildTokenCostBreakdown`
+ *
+ * 作者: gaohongshun
+ *
+ * 时间: 2026-04-27
+ *
+ * # 参数
+ * - log: 参数 log
+ *
+ * # 返回
+ * 返回日志对应的 Token 与费用拆解结果
+ */
+function buildTokenCostBreakdown(log: RequestLog): TokenCostBreakdown | null {
+  const normalizedModel = String(log.model || "").trim().toLowerCase();
+  if (!normalizedModel) {
+    return null;
+  }
+
+  const inputTokens = Math.max(0, log.inputTokens || 0);
+  const cachedInputTokens = Math.min(
+    inputTokens,
+    Math.max(0, log.cachedInputTokens || 0),
+  );
+  const outputTokens = Math.max(0, log.outputTokens || 0);
+  const reasoningOutputTokens = Math.max(0, log.reasoningOutputTokens || 0);
+  const price = resolveModelPricePer1K(normalizedModel, inputTokens);
+  if (!price) {
+    return null;
+  }
+
+  const billableInputTokens = Math.max(0, inputTokens - cachedInputTokens);
+  const inputPerMillion = price.input * 1000;
+  const cachedInputPerMillion = price.cachedInput * 1000;
+  const outputPerMillion = price.output * 1000;
+  const estimatedCostUsd =
+    (billableInputTokens / 1_000_000) * inputPerMillion +
+    (cachedInputTokens / 1_000_000) * cachedInputPerMillion +
+    (outputTokens / 1_000_000) * outputPerMillion;
+
+  return {
+    inputPer1K: price.input,
+    cachedInputPer1K: price.cachedInput,
+    outputPer1K: price.output,
+    inputPerMillion,
+    cachedInputPerMillion,
+    outputPerMillion,
+    inputTokens,
+    cachedInputTokens,
+    billableInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    estimatedCostUsd,
+  };
+}
+
+/**
+ * 函数 `buildTokenCostFormulaText`
+ *
+ * 作者: gaohongshun
+ *
+ * 时间: 2026-04-27
+ *
+ * # 参数
+ * - breakdown: 参数 breakdown
+ *
+ * # 返回
+ * 返回费用公式说明文本
+ */
+function buildTokenCostFormulaText(breakdown: TokenCostBreakdown): string {
+  return `(${formatTableTokenAmount(
+    breakdown.billableInputTokens,
+  )} tokens / 1M tokens * ${formatPreciseUsdAmount(
+    breakdown.inputPerMillion,
+  )} + ${formatTableTokenAmount(
+    breakdown.cachedInputTokens,
+  )} tokens / 1M tokens * ${formatPreciseUsdAmount(
+    breakdown.cachedInputPerMillion,
+  )} + ${formatTableTokenAmount(
+    breakdown.outputTokens,
+  )} tokens / 1M tokens * ${formatPreciseUsdAmount(
+    breakdown.outputPerMillion,
+  )}) = ${formatPreciseUsdAmount(breakdown.estimatedCostUsd)}`;
 }
 
 /**
@@ -1300,6 +1545,117 @@ function ModelEffortCell({
 }
 
 /**
+ * 函数 `TokenCostInfoCell`
+ *
+ * 作者: gaohongshun
+ *
+ * 时间: 2026-04-27
+ *
+ * # 参数
+ * - params: 参数 params
+ *
+ * # 返回
+ * 返回 Token 与费用详情单元格
+ */
+function TokenCostInfoCell({
+  log,
+}: {
+  log: RequestLog;
+}) {
+  const { t } = useI18n();
+  const breakdown = buildTokenCostBreakdown(log);
+  const modelDisplay = formatModelEffortDisplay(log);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<div />}
+        className="block cursor-help text-left"
+      >
+        <div className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
+          <span>
+            {t("总")} {formatTableTokenAmount(log.totalTokens)}
+          </span>
+          <span className="font-medium text-emerald-600">
+            {t("费用")} {formatUsdAmount(log.estimatedCostUsd, "-")}
+          </span>
+          <span>
+            {t("输入")} {formatTableTokenAmount(log.inputTokens)}
+          </span>
+          <span className="opacity-60">
+            {t("缓存")} {formatTableTokenAmount(log.cachedInputTokens)}
+          </span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-[560px]">
+        <div className="flex min-w-[360px] max-w-[560px] flex-col gap-2">
+          <div className="space-y-0.5">
+            <div className="text-[10px] text-background/70">{t("日志详情")}</div>
+            <div className="break-all text-[11px]">
+              {t("模型")} {modelDisplay}，
+              {t("总 Token")} {formatTableTokenAmount(log.totalTokens)}，
+              {t("费用")} {formatUsdAmount(log.estimatedCostUsd, "-")}
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            <div className="text-[10px] text-background/70">{t("Token 明细")}</div>
+            <div className="grid gap-1 text-[11px]">
+              <div>
+                {t("输入")} {formatTableTokenAmount(log.inputTokens)}
+              </div>
+              <div>
+                {t("缓存输入")} {formatTableTokenAmount(log.cachedInputTokens)}
+              </div>
+              <div>
+                {t("输出")} {formatTableTokenAmount(log.outputTokens)}
+              </div>
+              {typeof log.reasoningOutputTokens === "number" ? (
+                <div>
+                  {t("推理输出")} {formatTableTokenAmount(log.reasoningOutputTokens)}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          {breakdown ? (
+            <div className="space-y-0.5">
+              <div className="text-[10px] text-background/70">{t("计费过程")}</div>
+              <div className="grid gap-1 text-[11px]">
+                <div>
+                  {t("输入价格")} {formatUsdRatePerMillion(breakdown.inputPerMillion)}
+                </div>
+                <div>
+                  {t("缓存读取价格")}{" "}
+                  {formatUsdRatePerMillion(breakdown.cachedInputPerMillion)}
+                </div>
+                <div>
+                  {t("输出价格")} {formatUsdRatePerMillion(breakdown.outputPerMillion)}
+                </div>
+                <div>
+                  {t("计费输入")} {formatTableTokenAmount(breakdown.billableInputTokens)}
+                </div>
+                <div className="break-words">
+                  {buildTokenCostFormulaText(breakdown)}
+                </div>
+                <div className="text-background/70">
+                  {t("仅供参考，以实际扣费为准")}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-0.5">
+              <div className="text-[10px] text-background/70">{t("计费过程")}</div>
+              <div className="text-[11px]">
+                {t("当前模型未匹配到内置单价，暂时无法展示详细公式")}
+              </div>
+            </div>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
  * 函数 `buildSummaryPlaceholder`
  *
  * 作者: gaohongshun
@@ -2047,18 +2403,7 @@ function LogsPageContent() {
                       </span>
                     </TableCell>
                     <TableCell className="px-4 py-3 align-top">
-                      <div className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
-                        <span>{t("总")} {formatTableTokenAmount(log.totalTokens)}</span>
-                        <span className="font-medium text-emerald-600">
-                          {t("费用")} {formatUsdAmount(log.estimatedCostUsd, "-")}
-                        </span>
-                        <span>
-                          {t("输入")} {formatTableTokenAmount(log.inputTokens)}
-                        </span>
-                        <span className="opacity-60">
-                          {t("缓存")} {formatTableTokenAmount(log.cachedInputTokens)}
-                        </span>
-                      </div>
+                      <TokenCostInfoCell log={log} />
                     </TableCell>
                     <TableCell className="px-4 py-3 text-left align-top">
                       <ErrorInfoCell
