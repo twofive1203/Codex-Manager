@@ -84,63 +84,6 @@ fn should_try_provider_executor_aggregate_route(
     )
 }
 
-fn model_pattern_matches(pattern: &str, model: &str) -> bool {
-    let pattern = pattern.trim().to_ascii_lowercase();
-    let model = model.trim().to_ascii_lowercase();
-    if pattern.is_empty() || model.is_empty() {
-        return false;
-    }
-    if pattern == "*" {
-        return true;
-    }
-    let parts = pattern.split('*').collect::<Vec<_>>();
-    if parts.len() == 1 {
-        return model == pattern;
-    }
-    let mut cursor = 0usize;
-    for (idx, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        if idx == 0 && !pattern.starts_with('*') {
-            if !model[cursor..].starts_with(part) {
-                return false;
-            }
-            cursor += part.len();
-            continue;
-        }
-        if idx == parts.len() - 1 && !pattern.ends_with('*') {
-            return model[cursor..].ends_with(part);
-        }
-        let Some(found) = model[cursor..].find(part) else {
-            return false;
-        };
-        cursor += found + part.len();
-    }
-    true
-}
-
-fn candidate_matches_model_rules(
-    candidate: &codexmanager_core::storage::AggregateApi,
-    model: Option<&str>,
-) -> bool {
-    let Some(raw_rules) = candidate
-        .model_rules
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return true;
-    };
-    let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    raw_rules.lines().any(|line| {
-        let trimmed = line.trim();
-        !trimmed.is_empty() && !trimmed.starts_with('#') && model_pattern_matches(trimmed, model)
-    })
-}
-
 fn executor_kind_label(value: GatewayUpstreamExecutorKind) -> &'static str {
     match value {
         GatewayUpstreamExecutorKind::CodexResponses => "codex_responses",
@@ -373,15 +316,10 @@ pub(in super::super) fn proxy_validated_request(
         match super::protocol::aggregate_api::resolve_aggregate_api_rotation_candidates(
             &storage,
             protocol_type.as_str(),
+            model_for_log.as_deref(),
             aggregate_api_id.as_deref(),
         ) {
             Ok(aggregate_api_candidates) => {
-                let aggregate_api_candidates = aggregate_api_candidates
-                    .into_iter()
-                    .filter(|candidate| {
-                        candidate_matches_model_rules(candidate, model_for_log.as_deref())
-                    })
-                    .collect::<Vec<_>>();
                 return proxy_with_aggregate_candidates(
                     request,
                     &storage,
@@ -599,34 +537,12 @@ pub(in super::super) fn proxy_validated_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_matches_model_rules, exhausted_gateway_error_for_log, model_pattern_matches,
-        provider_upstream_hint, resolve_upstream_is_stream,
+        exhausted_gateway_error_for_log, provider_upstream_hint, resolve_upstream_is_stream,
         should_try_provider_executor_aggregate_route,
     };
     use crate::gateway::upstream::executor::{
         GatewayUpstreamExecutionPlan, GatewayUpstreamExecutorKind, GatewayUpstreamRouteKind,
     };
-    use codexmanager_core::storage::AggregateApi;
-
-    fn aggregate_candidate_with_rules(model_rules: Option<&str>) -> AggregateApi {
-        AggregateApi {
-            id: "agg-1".to_string(),
-            provider_type: "codex".to_string(),
-            supplier_name: Some("agg".to_string()),
-            model_rules: model_rules.map(str::to_string),
-            sort: 0,
-            url: "https://agg.example.com".to_string(),
-            auth_type: "apikey".to_string(),
-            auth_params_json: None,
-            action: None,
-            status: "active".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            last_test_at: None,
-            last_test_status: None,
-            last_test_error: None,
-        }
-    }
 
     /// 函数 `exhausted_gateway_error_includes_attempts_skips_and_last_error`
     ///
@@ -683,32 +599,6 @@ mod tests {
         assert!(!resolve_upstream_is_stream(false, "/v1/responses/compact"));
         assert!(!resolve_upstream_is_stream(false, "/v1/chat/completions"));
         assert!(resolve_upstream_is_stream(true, "/v1/chat/completions"));
-    }
-
-    #[test]
-    fn model_pattern_supports_wildcards() {
-        assert!(model_pattern_matches("gpt-5*", "gpt-5.4-mini"));
-        assert!(model_pattern_matches("*sonnet*", "claude-sonnet-4"));
-        assert!(!model_pattern_matches("gemini*", "gpt-5.4-mini"));
-    }
-
-    #[test]
-    fn candidate_model_rules_only_match_allowed_models() {
-        let unrestricted = aggregate_candidate_with_rules(None);
-        assert!(candidate_matches_model_rules(
-            &unrestricted,
-            Some("gpt-5.4-mini")
-        ));
-
-        let restricted = aggregate_candidate_with_rules(Some("claude*\n#gpt"));
-        assert!(candidate_matches_model_rules(
-            &restricted,
-            Some("claude-sonnet-4")
-        ));
-        assert!(!candidate_matches_model_rules(
-            &restricted,
-            Some("gpt-5.4-mini")
-        ));
     }
 
     #[test]
