@@ -243,14 +243,84 @@ fn normalize_action_override(
     }
 }
 
+/// 函数 `normalize_model_rules_json`
+///
+/// 作者: lichong
+///
+/// 时间: 2026-04-28
+///
+/// # 参数
+/// - value: 参数 value
+///
+/// # 返回
+/// 返回函数执行结果
+fn normalize_model_rules_json(
+    value: Option<serde_json::Value>,
+) -> Result<Option<Option<String>>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(Some(None));
+    }
+    let rules = value
+        .as_array()
+        .ok_or_else(|| "modelRules must be an array".to_string())?
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(str::trim)
+                .filter(|rule| !rule.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| "modelRules item must be a non-empty string".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if rules.is_empty() {
+        return Ok(Some(None));
+    }
+    serde_json::to_string(&rules)
+        .map(Some)
+        .map(Some)
+        .map_err(|_| "modelRules serialization failed".to_string())
+}
+
+/// 函数 `parse_model_rules_json`
+///
+/// 作者: lichong
+///
+/// 时间: 2026-04-28
+///
+/// # 参数
+/// - raw: 参数 raw
+///
+/// # 返回
+/// 返回函数执行结果
+pub(crate) fn parse_model_rules_json(raw: Option<&str>) -> Option<Vec<String>> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let rules = serde_json::from_str::<Vec<String>>(raw).ok()?;
+    let normalized = rules
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use codexmanager_core::storage::AggregateApi;
 
     use super::{
-        action_path_or_default, normalize_action_override, normalize_provider_type,
-        normalize_provider_type_value, provider_default_url, AGGREGATE_API_PROVIDER_CLAUDE,
-        AGGREGATE_API_PROVIDER_GEMINI,
+        action_path_or_default, normalize_action_override, normalize_model_rules_json,
+        normalize_provider_type, normalize_provider_type_value, parse_model_rules_json,
+        provider_default_url, AGGREGATE_API_PROVIDER_CLAUDE, AGGREGATE_API_PROVIDER_GEMINI,
     };
 
     fn aggregate_api_with_action(action: Option<&str>) -> AggregateApi {
@@ -259,6 +329,7 @@ mod tests {
             provider_type: "claude".to_string(),
             supplier_name: Some("test".to_string()),
             sort: 0,
+            model_rules_json: None,
             url: "https://open.bigmodel.cn/api/anthropic".to_string(),
             auth_type: "apikey".to_string(),
             auth_params_json: None,
@@ -309,6 +380,32 @@ mod tests {
         assert_eq!(
             normalize_provider_type(Some("claude".to_string())).unwrap(),
             AGGREGATE_API_PROVIDER_CLAUDE
+        );
+    }
+
+    /// 函数 `model_rules_json_roundtrip_is_stable`
+    ///
+    /// 作者: lichong
+    ///
+    /// 时间: 2026-04-28
+    ///
+    /// # 参数
+    /// 无
+    ///
+    /// # 返回
+    /// 无
+    #[test]
+    fn model_rules_json_roundtrip_is_stable() {
+        let normalized = normalize_model_rules_json(Some(serde_json::json!(["gpt-5", "o3*"])))
+            .expect("normalize model rules");
+        assert_eq!(normalized, Some(Some("[\"gpt-5\",\"o3*\"]".to_string())));
+        assert_eq!(
+            parse_model_rules_json(normalized.flatten().as_deref()),
+            Some(vec!["gpt-5".to_string(), "o3*".to_string()])
+        );
+        assert_eq!(
+            normalize_model_rules_json(Some(serde_json::Value::Null)).expect("normalize null"),
+            Some(None)
         );
     }
 }
@@ -926,6 +1023,7 @@ pub(crate) fn list_aggregate_apis() -> Result<Vec<AggregateApiSummary>, String> 
             provider_type: item.provider_type,
             supplier_name: item.supplier_name,
             sort: item.sort,
+            model_rules: parse_model_rules_json(item.model_rules_json.as_deref()),
             url: item.url,
             auth_type: item.auth_type,
             auth_params: item
@@ -962,6 +1060,7 @@ pub(crate) fn create_aggregate_api(
     provider_type: Option<String>,
     supplier_name: Option<String>,
     sort: Option<i64>,
+    model_rules: Option<serde_json::Value>,
     auth_type: Option<String>,
     auth_custom_enabled: Option<bool>,
     auth_params: Option<serde_json::Value>,
@@ -982,6 +1081,7 @@ pub(crate) fn create_aggregate_api(
         auth_custom_enabled,
         auth_params,
     )?;
+    let normalized_model_rules_json = normalize_model_rules_json(model_rules)?.unwrap_or(None);
     let normalized_action =
         normalize_action_override(action_custom_enabled, action)?.unwrap_or(None);
     let normalized_secret = if normalized_auth_type == AGGREGATE_API_AUTH_APIKEY {
@@ -1006,6 +1106,7 @@ pub(crate) fn create_aggregate_api(
         provider_type: normalized_provider_type,
         supplier_name: Some(normalized_supplier_name),
         sort: normalized_sort,
+        model_rules_json: normalized_model_rules_json,
         url: normalized_url,
         auth_type: normalized_auth_type,
         auth_params_json: normalized_auth_params_json
@@ -1054,6 +1155,7 @@ pub(crate) fn update_aggregate_api(
     provider_type: Option<String>,
     supplier_name: Option<String>,
     sort: Option<i64>,
+    model_rules: Option<serde_json::Value>,
     status: Option<String>,
     auth_type: Option<String>,
     auth_custom_enabled: Option<bool>,
@@ -1101,6 +1203,11 @@ pub(crate) fn update_aggregate_api(
     if sort.is_some() {
         storage
             .update_aggregate_api_sort(api_id, normalize_sort(sort))
+            .map_err(|err| err.to_string())?;
+    }
+    if let Some(model_rules_json) = normalize_model_rules_json(model_rules)? {
+        storage
+            .update_aggregate_api_model_rules_json(api_id, model_rules_json.as_deref())
             .map_err(|err| err.to_string())?;
     }
     if let Some(status) = status {

@@ -238,6 +238,7 @@ pub struct AggregateApi {
     pub provider_type: String,
     pub supplier_name: Option<String>,
     pub sort: i64,
+    pub model_rules_json: Option<String>,
     pub url: String,
     pub auth_type: String,
     pub auth_params_json: Option<String>,

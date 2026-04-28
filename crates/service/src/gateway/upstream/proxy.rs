@@ -317,6 +317,7 @@ pub(in super::super) fn proxy_validated_request(
             &storage,
             protocol_type.as_str(),
             aggregate_api_id.as_deref(),
+            model_for_log.as_deref(),
         ) {
             Ok(aggregate_api_candidates) => {
                 return proxy_with_aggregate_candidates(

@@ -40,6 +40,11 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
             let provider_type = super::string_param(req, "providerType");
             let supplier_name = super::string_param(req, "supplierName");
             let sort = super::i64_param(req, "sort");
+            let model_rules = req
+                .params
+                .as_ref()
+                .and_then(|v| v.get("modelRules"))
+                .cloned();
             let url = super::string_param(req, "url");
             let key = super::string_param(req, "key");
             let auth_type = super::string_param(req, "authType");
@@ -59,6 +64,7 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 provider_type,
                 supplier_name,
                 sort,
+                model_rules,
                 auth_type,
                 auth_custom_enabled,
                 auth_params,
@@ -73,6 +79,11 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
             let provider_type = super::string_param(req, "providerType");
             let supplier_name = super::string_param(req, "supplierName");
             let sort = super::i64_param(req, "sort");
+            let model_rules = req
+                .params
+                .as_ref()
+                .and_then(|v| v.get("modelRules"))
+                .cloned();
             let status = super::string_param(req, "status");
             let url = super::string_param(req, "url");
             let key = super::string_param(req, "key");
@@ -94,6 +105,7 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 provider_type,
                 supplier_name,
                 sort,
+                model_rules,
                 status,
                 auth_type,
                 auth_custom_enabled,

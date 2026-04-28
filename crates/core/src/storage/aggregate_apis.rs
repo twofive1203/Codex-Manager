@@ -7,6 +7,7 @@ const AGGREGATE_API_SELECT_SQL: &str = "SELECT
     provider_type,
     supplier_name,
     sort,
+    model_rules_json,
     url,
     auth_type,
     auth_params_json,
@@ -39,6 +40,7 @@ impl Storage {
                 provider_type,
                 supplier_name,
                 sort,
+                model_rules_json,
                 url,
                 auth_type,
                 auth_params_json,
@@ -49,12 +51,13 @@ impl Storage {
                 last_test_at,
                 last_test_status,
                 last_test_error
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             (
                 &api.id,
                 &api.provider_type,
                 &api.supplier_name,
                 api.sort,
+                &api.model_rules_json,
                 &api.url,
                 &api.auth_type,
                 &api.auth_params_json,
@@ -182,6 +185,31 @@ impl Storage {
         self.conn.execute(
             "UPDATE aggregate_apis SET sort = ?1, updated_at = ?2 WHERE id = ?3",
             (sort, now_ts(), api_id),
+        )?;
+        Ok(())
+    }
+
+    /// 函数 `update_aggregate_api_model_rules_json`
+    ///
+    /// 作者: lichong
+    ///
+    /// 时间: 2026-04-28
+    ///
+    /// # 参数
+    /// - self: 参数 self
+    /// - api_id: 参数 api_id
+    /// - model_rules_json: 参数 model_rules_json
+    ///
+    /// # 返回
+    /// 返回函数执行结果
+    pub fn update_aggregate_api_model_rules_json(
+        &self,
+        api_id: &str,
+        model_rules_json: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE aggregate_apis SET model_rules_json = ?1, updated_at = ?2 WHERE id = ?3",
+            (model_rules_json, now_ts(), api_id),
         )?;
         Ok(())
     }
@@ -378,6 +406,7 @@ impl Storage {
                 provider_type TEXT NOT NULL DEFAULT 'codex',
                 supplier_name TEXT,
                 sort INTEGER NOT NULL DEFAULT 0,
+                model_rules_json TEXT,
                 url TEXT NOT NULL,
                 auth_type TEXT NOT NULL DEFAULT 'apikey',
                 auth_params_json TEXT,
@@ -398,6 +427,7 @@ impl Storage {
         self.ensure_column("aggregate_apis", "provider_type", "TEXT")?;
         self.ensure_column("aggregate_apis", "supplier_name", "TEXT")?;
         self.ensure_column("aggregate_apis", "sort", "INTEGER DEFAULT 0")?;
+        self.ensure_column("aggregate_apis", "model_rules_json", "TEXT")?;
         self.ensure_column(
             "aggregate_apis",
             "auth_type",
@@ -472,15 +502,67 @@ fn map_aggregate_api_row(row: &Row<'_>) -> Result<AggregateApi> {
         provider_type: row.get(1)?,
         supplier_name: row.get(2)?,
         sort: row.get(3)?,
-        url: row.get(4)?,
-        auth_type: row.get(5)?,
-        auth_params_json: row.get(6)?,
-        action: row.get(7)?,
-        status: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
-        last_test_at: row.get(11)?,
-        last_test_status: row.get(12)?,
-        last_test_error: row.get(13)?,
+        model_rules_json: row.get(4)?,
+        url: row.get(5)?,
+        auth_type: row.get(6)?,
+        auth_params_json: row.get(7)?,
+        action: row.get(8)?,
+        status: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        last_test_at: row.get(12)?,
+        last_test_status: row.get(13)?,
+        last_test_error: row.get(14)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::{now_ts, AggregateApi, Storage};
+
+    /// 函数 `aggregate_api_storage_preserves_model_rules_json`
+    ///
+    /// 作者: lichong
+    ///
+    /// 时间: 2026-04-28
+    ///
+    /// # 参数
+    /// 无
+    ///
+    /// # 返回
+    /// 无
+    #[test]
+    fn aggregate_api_storage_preserves_model_rules_json() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        let now = now_ts();
+        storage
+            .insert_aggregate_api(&AggregateApi {
+                id: "agg-model-rules".to_string(),
+                provider_type: "codex".to_string(),
+                supplier_name: Some("test".to_string()),
+                sort: 1,
+                model_rules_json: Some("[\"gpt-5\",\"o3*\"]".to_string()),
+                url: "https://api.example.com/v1".to_string(),
+                auth_type: "apikey".to_string(),
+                auth_params_json: None,
+                action: None,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+            })
+            .expect("insert aggregate api");
+
+        let saved = storage
+            .find_aggregate_api_by_id("agg-model-rules")
+            .expect("find aggregate api")
+            .expect("aggregate api exists");
+        assert_eq!(
+            saved.model_rules_json.as_deref(),
+            Some("[\"gpt-5\",\"o3*\"]")
+        );
+    }
 }

@@ -8,8 +8,8 @@ use tiny_http::Request;
 
 use super::super::GatewayUpstreamResponse;
 use crate::aggregate_api::{
-    AGGREGATE_API_AUTH_APIKEY, AGGREGATE_API_AUTH_USERPASS, AGGREGATE_API_PROVIDER_CLAUDE,
-    AGGREGATE_API_PROVIDER_CODEX, AGGREGATE_API_PROVIDER_GEMINI,
+    parse_model_rules_json, AGGREGATE_API_AUTH_APIKEY, AGGREGATE_API_AUTH_USERPASS,
+    AGGREGATE_API_PROVIDER_CLAUDE, AGGREGATE_API_PROVIDER_CODEX, AGGREGATE_API_PROVIDER_GEMINI,
 };
 use crate::gateway::request_log::RequestLogUsage;
 
@@ -84,6 +84,79 @@ fn effective_action_path(candidate: &AggregateApi, path: &str) -> String {
         Some(value) => normalize_action_path(value),
         None => path.to_string(),
     }
+}
+
+/// 函数 `wildcard_pattern_matches`
+///
+/// 作者: lichong
+///
+/// 时间: 2026-04-28
+///
+/// # 参数
+/// - pattern: 参数 pattern
+/// - value: 参数 value
+///
+/// # 返回
+/// 返回函数执行结果
+fn wildcard_pattern_matches(pattern: &str, value: &str) -> bool {
+    if !pattern.contains('*') {
+        return pattern.eq_ignore_ascii_case(value);
+    }
+    let normalized_pattern = pattern.to_ascii_lowercase();
+    let normalized_value = value.to_ascii_lowercase();
+    let starts_with_wildcard = normalized_pattern.starts_with('*');
+    let ends_with_wildcard = normalized_pattern.ends_with('*');
+    let segments = normalized_pattern
+        .split('*')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return false;
+    }
+
+    let mut cursor = 0usize;
+    for (idx, segment) in segments.iter().enumerate() {
+        let Some(found) = normalized_value[cursor..].find(*segment) else {
+            return false;
+        };
+        let absolute = cursor + found;
+        if idx == 0 && !starts_with_wildcard && absolute != 0 {
+            return false;
+        }
+        cursor = absolute + segment.len();
+    }
+
+    if !ends_with_wildcard {
+        return cursor == normalized_value.len();
+    }
+    true
+}
+
+/// 函数 `matches_model_rules`
+///
+/// 作者: lichong
+///
+/// 时间: 2026-04-28
+///
+/// # 参数
+/// - candidate: 参数 candidate
+/// - requested_model: 参数 requested_model
+///
+/// # 返回
+/// 返回函数执行结果
+fn matches_model_rules(candidate: &AggregateApi, requested_model: Option<&str>) -> bool {
+    let Some(rules) = parse_model_rules_json(candidate.model_rules_json.as_deref()) else {
+        return true;
+    };
+    let Some(requested_model) = requested_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    rules
+        .iter()
+        .any(|rule| wildcard_pattern_matches(rule.as_str(), requested_model))
 }
 
 fn build_upstream_url(base_url: &str, effective_path: &str) -> Result<reqwest::Url, ()> {
@@ -635,6 +708,7 @@ pub(crate) fn resolve_aggregate_api_rotation_candidates(
     storage: &Storage,
     protocol_type: &str,
     aggregate_api_id: Option<&str>,
+    requested_model: Option<&str>,
 ) -> Result<Vec<AggregateApi>, String> {
     let provider_type = match protocol_type {
         "anthropic_native" => AGGREGATE_API_PROVIDER_CLAUDE,
@@ -665,6 +739,7 @@ pub(crate) fn resolve_aggregate_api_rotation_candidates(
             candidates.insert(0, preferred);
         }
     }
+    candidates.retain(|api| matches_model_rules(api, requested_model));
 
     if candidates.is_empty() {
         Err(format!(
@@ -1130,6 +1205,7 @@ mod bridge_tests {
             provider_type: AGGREGATE_API_PROVIDER_CODEX.to_string(),
             supplier_name: None,
             sort,
+            model_rules_json: None,
             url: format!("https://{id}.example.com"),
             auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
             auth_params_json: None,
@@ -1285,7 +1361,7 @@ mod tests {
 
     use super::{
         build_upstream_url, effective_action_path, resolve_aggregate_api_rotation_candidates,
-        resolve_passthrough_sse_protocol,
+        resolve_passthrough_sse_protocol, wildcard_pattern_matches,
     };
     use crate::aggregate_api::{
         AGGREGATE_API_AUTH_APIKEY, AGGREGATE_API_PROVIDER_CLAUDE, AGGREGATE_API_PROVIDER_CODEX,
@@ -1299,6 +1375,7 @@ mod tests {
             provider_type: "claude".to_string(),
             supplier_name: Some("test".to_string()),
             sort: 0,
+            model_rules_json: None,
             url: "https://open.bigmodel.cn/api/anthropic".to_string(),
             auth_type: "apikey".to_string(),
             auth_params_json: None,
@@ -1369,6 +1446,7 @@ mod tests {
                     provider_type: provider_type.to_string(),
                     supplier_name: Some(id.to_string()),
                     sort: 0,
+                    model_rules_json: None,
                     url: format!("https://{id}.example.com"),
                     auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
                     auth_params_json: None,
@@ -1383,13 +1461,97 @@ mod tests {
                 .expect("insert aggregate api");
         }
 
-        let candidates = resolve_aggregate_api_rotation_candidates(&storage, "gemini_native", None)
-            .expect("resolve gemini candidates");
+        let candidates =
+            resolve_aggregate_api_rotation_candidates(&storage, "gemini_native", None, None)
+                .expect("resolve gemini candidates");
         let candidate_ids = candidates
             .iter()
             .map(|item| item.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(candidate_ids, vec!["agg-gemini"]);
+    }
+
+    /// 函数 `wildcard_pattern_matches_supports_case_insensitive_rules`
+    ///
+    /// 作者: lichong
+    ///
+    /// 时间: 2026-04-28
+    ///
+    /// # 参数
+    /// 无
+    ///
+    /// # 返回
+    /// 无
+    #[test]
+    fn wildcard_pattern_matches_supports_case_insensitive_rules() {
+        assert!(wildcard_pattern_matches("gpt-5*", "GPT-5.4"));
+        assert!(wildcard_pattern_matches("*sonnet*", "claude-3-5-sonnet"));
+        assert!(!wildcard_pattern_matches("o3-mini", "o4-mini"));
+    }
+
+    /// 函数 `resolve_aggregate_api_rotation_candidates_filters_by_model_rules`
+    ///
+    /// 作者: lichong
+    ///
+    /// 时间: 2026-04-28
+    ///
+    /// # 参数
+    /// 无
+    ///
+    /// # 返回
+    /// 无
+    #[test]
+    fn resolve_aggregate_api_rotation_candidates_filters_by_model_rules() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        let now = now_ts();
+        for (id, sort, model_rules_json) in [
+            ("agg-unrestricted", 0, None),
+            ("agg-gpt5", 1, Some("[\"gpt-5*\"]")),
+            ("agg-claude", 2, Some("[\"claude-*\"]")),
+        ] {
+            storage
+                .insert_aggregate_api(&AggregateApi {
+                    id: id.to_string(),
+                    provider_type: AGGREGATE_API_PROVIDER_CODEX.to_string(),
+                    supplier_name: Some(id.to_string()),
+                    sort,
+                    model_rules_json: model_rules_json.map(str::to_string),
+                    url: format!("https://{id}.example.com"),
+                    auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
+                    auth_params_json: None,
+                    action: None,
+                    status: "active".to_string(),
+                    created_at: now,
+                    updated_at: now,
+                    last_test_at: None,
+                    last_test_status: None,
+                    last_test_error: None,
+                })
+                .expect("insert aggregate api");
+        }
+
+        let gpt_candidates = resolve_aggregate_api_rotation_candidates(
+            &storage,
+            "openai_compat",
+            None,
+            Some("gpt-5.4"),
+        )
+        .expect("resolve gpt candidates");
+        let gpt_candidate_ids = gpt_candidates
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(gpt_candidate_ids, vec!["agg-unrestricted", "agg-gpt5"]);
+
+        let no_model_candidates =
+            resolve_aggregate_api_rotation_candidates(&storage, "openai_compat", None, None)
+                .expect("resolve no-model candidates");
+        let no_model_candidate_ids = no_model_candidates
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(no_model_candidate_ids, vec!["agg-unrestricted"]);
     }
 
     /// 函数 `final_error_promotes_success_status_to_bad_gateway`
