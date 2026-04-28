@@ -16,6 +16,7 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -73,6 +74,7 @@ export function AggregateApiModal({
   const [providerType, setProviderType] = useState("codex");
   const [supplierName, setSupplierName] = useState("");
   const [sortDraft, setSortDraft] = useState("0");
+  const [modelRulesInput, setModelRulesInput] = useState("");
   const [url, setUrl] = useState("");
   const [authType, setAuthType] = useState<"apikey" | "userpass">("apikey");
   const [authCustomEnabled, setAuthCustomEnabled] = useState(false);
@@ -107,6 +109,7 @@ export function AggregateApiModal({
     setProviderType(nextProviderType);
     setSupplierName(aggregateApi?.supplierName || "");
     setSortDraft(String(aggregateApi?.sort ?? defaultSort));
+    setModelRulesInput((aggregateApi?.modelRules || []).join("\n"));
     setUrl(aggregateApi?.url || "");
     const nextAuthType =
       aggregateApi?.authType === "userpass" ? "userpass" : "apikey";
@@ -200,6 +203,10 @@ export function AggregateApiModal({
       toast.error(t("顺序必须是数字"));
       return;
     }
+    const parsedModelRules = modelRulesInput
+      .split("\n")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
     if (!aggregateApi?.id && !key.trim()) {
       if (authType === "apikey") {
         toast.error(t("请输入聚合 API 密钥"));
@@ -270,6 +277,7 @@ export function AggregateApiModal({
           providerType,
           supplierName,
           sort: parsedSort,
+          modelRules: parsedModelRules.length > 0 ? parsedModelRules : null,
           url,
           key: authType === "apikey" ? key || null : null,
           authType,
@@ -294,6 +302,7 @@ export function AggregateApiModal({
         providerType,
         supplierName,
         sort: parsedSort,
+        modelRules: parsedModelRules.length > 0 ? parsedModelRules : null,
         url,
         key: authType === "apikey" ? key : null,
         authType,
@@ -469,6 +478,25 @@ export function AggregateApiModal({
                   disabled={!isServiceReady}
                   onChange={(event) => setUrl(event.target.value)}
                 />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="aggregate-api-model-rules">
+                  {t("模型限制 (可选)")}
+                </Label>
+                <Textarea
+                  id="aggregate-api-model-rules"
+                  className="min-h-[100px] font-mono text-xs"
+                  placeholder={t("一行一个模型，支持 * 通配；留空表示不限制")}
+                  value={modelRulesInput}
+                  disabled={!isServiceReady}
+                  onChange={(event) => setModelRulesInput(event.target.value)}
+                />
+                <p className="text-[11px] leading-4 text-muted-foreground">
+                  {t(
+                    "仅命中这些模型请求；当多个供应商同时命中同一模型时，仍按顺序值优先。",
+                  )}
+                </p>
               </div>
 
               {authType === "apikey" ? (
