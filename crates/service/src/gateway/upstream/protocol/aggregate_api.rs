@@ -14,7 +14,6 @@ use crate::aggregate_api::{
 use crate::gateway::request_log::RequestLogUsage;
 
 const AGGREGATE_API_RETRY_ATTEMPTS_PER_CHANNEL: usize = 3;
-const ENV_AGGREGATE_MODEL_PROVIDER_RULES: &str = "CODEXMANAGER_AGGREGATE_MODEL_PROVIDER_RULES";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -470,28 +469,8 @@ fn model_pattern_matches(pattern: &str, model: &str) -> bool {
 }
 
 fn resolve_provider_type_for_request(protocol_type: &str, model: Option<&str>) -> String {
-    let default_provider = default_provider_type_for_protocol(protocol_type).to_string();
-    let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
-        return default_provider;
-    };
-    let raw = std::env::var(ENV_AGGREGATE_MODEL_PROVIDER_RULES).unwrap_or_default();
-    if raw.trim().is_empty() {
-        return default_provider;
-    }
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let Some((pattern, provider_raw)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if !model_pattern_matches(pattern, model) {
-            continue;
-        }
-        return normalize_provider_type_value(provider_raw);
-    }
-    default_provider
+    let _ = model;
+    default_provider_type_for_protocol(protocol_type).to_string()
 }
 
 fn candidate_matches_model_rules(candidate: &AggregateApi, model: Option<&str>) -> bool {
@@ -1373,7 +1352,6 @@ mod tests {
     use super::{
         build_upstream_url, effective_action_path, resolve_aggregate_api_rotation_candidates,
         resolve_passthrough_sse_protocol, resolve_provider_type_for_request,
-        ENV_AGGREGATE_MODEL_PROVIDER_RULES,
     };
     use crate::aggregate_api::{
         AGGREGATE_API_AUTH_APIKEY, AGGREGATE_API_PROVIDER_CLAUDE, AGGREGATE_API_PROVIDER_CODEX,
@@ -1484,23 +1462,18 @@ mod tests {
     }
 
     #[test]
-    fn model_provider_rules_can_override_default_provider_type() {
-        let _guard = crate::test_env_guard();
-        std::env::set_var(
-            ENV_AGGREGATE_MODEL_PROVIDER_RULES,
-            "claude*=claude\ngemini*=gemini",
-        );
+    fn provider_type_for_request_follows_protocol_defaults() {
         assert_eq!(
             resolve_provider_type_for_request("openai_compat", Some("claude-sonnet-4-20250514")),
+            AGGREGATE_API_PROVIDER_CODEX
+        );
+        assert_eq!(
+            resolve_provider_type_for_request("anthropic_native", Some("claude-sonnet-4")),
             AGGREGATE_API_PROVIDER_CLAUDE
         );
         assert_eq!(
-            resolve_provider_type_for_request("openai_compat", Some("gemini-2.5-pro")),
+            resolve_provider_type_for_request("gemini_native", Some("gemini-2.5-pro")),
             AGGREGATE_API_PROVIDER_GEMINI
-        );
-        assert_eq!(
-            resolve_provider_type_for_request("openai_compat", Some("gpt-5.4-mini")),
-            AGGREGATE_API_PROVIDER_CODEX
         );
     }
 
