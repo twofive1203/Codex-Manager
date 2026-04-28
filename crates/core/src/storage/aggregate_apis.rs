@@ -6,6 +6,7 @@ const AGGREGATE_API_SELECT_SQL: &str = "SELECT
     id,
     provider_type,
     supplier_name,
+    model_rules,
     sort,
     url,
     auth_type,
@@ -38,6 +39,7 @@ impl Storage {
                 id,
                 provider_type,
                 supplier_name,
+                model_rules,
                 sort,
                 url,
                 auth_type,
@@ -49,11 +51,12 @@ impl Storage {
                 last_test_at,
                 last_test_status,
                 last_test_error
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             (
                 &api.id,
                 &api.provider_type,
                 &api.supplier_name,
+                &api.model_rules,
                 api.sort,
                 &api.url,
                 &api.auth_type,
@@ -161,6 +164,18 @@ impl Storage {
         self.conn.execute(
             "UPDATE aggregate_apis SET supplier_name = ?1, updated_at = ?2 WHERE id = ?3",
             (supplier_name, now_ts(), api_id),
+        )?;
+        Ok(())
+    }
+
+    pub fn update_aggregate_api_model_rules(
+        &self,
+        api_id: &str,
+        model_rules: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE aggregate_apis SET model_rules = ?1, updated_at = ?2 WHERE id = ?3",
+            (model_rules, now_ts(), api_id),
         )?;
         Ok(())
     }
@@ -377,6 +392,7 @@ impl Storage {
                 id TEXT PRIMARY KEY,
                 provider_type TEXT NOT NULL DEFAULT 'codex',
                 supplier_name TEXT,
+                model_rules TEXT,
                 sort INTEGER NOT NULL DEFAULT 0,
                 url TEXT NOT NULL,
                 auth_type TEXT NOT NULL DEFAULT 'apikey',
@@ -397,6 +413,7 @@ impl Storage {
         )?;
         self.ensure_column("aggregate_apis", "provider_type", "TEXT")?;
         self.ensure_column("aggregate_apis", "supplier_name", "TEXT")?;
+        self.ensure_column("aggregate_apis", "model_rules", "TEXT")?;
         self.ensure_column("aggregate_apis", "sort", "INTEGER DEFAULT 0")?;
         self.ensure_column(
             "aggregate_apis",
@@ -471,16 +488,17 @@ fn map_aggregate_api_row(row: &Row<'_>) -> Result<AggregateApi> {
         id: row.get(0)?,
         provider_type: row.get(1)?,
         supplier_name: row.get(2)?,
-        sort: row.get(3)?,
-        url: row.get(4)?,
-        auth_type: row.get(5)?,
-        auth_params_json: row.get(6)?,
-        action: row.get(7)?,
-        status: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
-        last_test_at: row.get(11)?,
-        last_test_status: row.get(12)?,
-        last_test_error: row.get(13)?,
+        model_rules: row.get(3)?,
+        sort: row.get(4)?,
+        url: row.get(5)?,
+        auth_type: row.get(6)?,
+        auth_params_json: row.get(7)?,
+        action: row.get(8)?,
+        status: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        last_test_at: row.get(12)?,
+        last_test_status: row.get(13)?,
+        last_test_error: row.get(14)?,
     })
 }

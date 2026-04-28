@@ -16,6 +16,7 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -72,6 +73,7 @@ export function AggregateApiModal({
   const { canAccessManagementRpc } = useRuntimeCapabilities();
   const [providerType, setProviderType] = useState("codex");
   const [supplierName, setSupplierName] = useState("");
+  const [modelRules, setModelRules] = useState("");
   const [sortDraft, setSortDraft] = useState("0");
   const [url, setUrl] = useState("");
   const [authType, setAuthType] = useState<"apikey" | "userpass">("apikey");
@@ -106,6 +108,7 @@ export function AggregateApiModal({
     const nextProviderType = aggregateApi?.providerType || "codex";
     setProviderType(nextProviderType);
     setSupplierName(aggregateApi?.supplierName || "");
+    setModelRules(aggregateApi?.modelRules || "");
     setSortDraft(String(aggregateApi?.sort ?? defaultSort));
     setUrl(aggregateApi?.url || "");
     const nextAuthType =
@@ -269,6 +272,7 @@ export function AggregateApiModal({
         await accountClient.updateAggregateApi(aggregateApi.id, {
           providerType,
           supplierName,
+          modelRules: modelRules.trim() || null,
           sort: parsedSort,
           url,
           key: authType === "apikey" ? key || null : null,
@@ -293,6 +297,7 @@ export function AggregateApiModal({
       const result = await accountClient.createAggregateApi({
         providerType,
         supplierName,
+        modelRules: modelRules.trim() || null,
         sort: parsedSort,
         url,
         key: authType === "apikey" ? key : null,
@@ -456,6 +461,21 @@ export function AggregateApiModal({
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="aggregate-api-model-rules">{t("模型限制（可选）")}</Label>
+                <Textarea
+                  id="aggregate-api-model-rules"
+                  className="min-h-[96px] font-mono text-xs"
+                  placeholder={t("一行一个模型模式，例如：\ngpt-5*\nclaude-sonnet-4*")}
+                  value={modelRules}
+                  disabled={!isServiceReady}
+                  onChange={(event) => setModelRules(event.target.value)}
+                />
+                <p className="text-[11px] leading-4 text-muted-foreground">
+                  {t("仅匹配这些模型时才会命中该供应商；支持 * 通配。留空表示不限制。")}
+                </p>
               </div>
 
               <div className="grid gap-2">

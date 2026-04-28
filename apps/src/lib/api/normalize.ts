@@ -752,6 +752,7 @@ export function normalizeAggregateApi(item: unknown): AggregateApi | null {
     id,
     providerType: asString(source.providerType ?? source.provider_type) || "codex",
     supplierName: asString(source.supplierName ?? source.supplier_name) || null,
+    modelRules: asString(source.modelRules ?? source.model_rules) || null,
     sort: asInteger(source.sort ?? source.priority, 0, 0),
     url: asString(source.url),
     authType: asString(source.authType ?? source.auth_type) || "apikey",

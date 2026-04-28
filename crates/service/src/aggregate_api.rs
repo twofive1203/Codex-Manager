@@ -99,6 +99,36 @@ fn normalize_sort(value: Option<i64>) -> i64 {
     value.unwrap_or(0)
 }
 
+fn normalize_model_rules(value: Option<String>) -> Result<Option<String>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let mut lines = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.contains('=') {
+            return Err("model rules should be one pattern per line (no '=')".to_string());
+        }
+        if trimmed.len() > 128 {
+            return Err("model rule is too long".to_string());
+        }
+        if !trimmed.chars().all(|ch| {
+            ch.is_ascii_alphanumeric() || matches!(ch, '*' | '-' | '_' | '.' | ':' | '/' | '+')
+        }) {
+            return Err("model rule contains unsupported characters".to_string());
+        }
+        lines.push(trimmed.to_string());
+    }
+    if lines.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(lines.join("\n")))
+    }
+}
+
 fn normalize_status(value: Option<String>) -> Result<String, String> {
     match value {
         Some(raw) => {
@@ -258,6 +288,7 @@ mod tests {
             id: "agg-test".to_string(),
             provider_type: "claude".to_string(),
             supplier_name: Some("test".to_string()),
+            model_rules: None,
             sort: 0,
             url: "https://open.bigmodel.cn/api/anthropic".to_string(),
             auth_type: "apikey".to_string(),
@@ -925,6 +956,7 @@ pub(crate) fn list_aggregate_apis() -> Result<Vec<AggregateApiSummary>, String> 
             id: item.id,
             provider_type: item.provider_type,
             supplier_name: item.supplier_name,
+            model_rules: item.model_rules,
             sort: item.sort,
             url: item.url,
             auth_type: item.auth_type,
@@ -961,6 +993,7 @@ pub(crate) fn create_aggregate_api(
     key: Option<String>,
     provider_type: Option<String>,
     supplier_name: Option<String>,
+    model_rules: Option<String>,
     sort: Option<i64>,
     auth_type: Option<String>,
     auth_custom_enabled: Option<bool>,
@@ -973,6 +1006,7 @@ pub(crate) fn create_aggregate_api(
     let storage = open_storage().ok_or_else(|| "storage unavailable".to_string())?;
     let normalized_provider_type = normalize_provider_type(provider_type)?;
     let normalized_supplier_name = normalize_supplier_name(supplier_name)?;
+    let normalized_model_rules = normalize_model_rules(model_rules)?;
     let normalized_sort = normalize_sort(sort);
     let normalized_url = normalize_upstream_base_url(url)?
         .unwrap_or_else(|| provider_default_url(normalized_provider_type.as_str()).to_string());
@@ -1005,6 +1039,7 @@ pub(crate) fn create_aggregate_api(
         id: id.clone(),
         provider_type: normalized_provider_type,
         supplier_name: Some(normalized_supplier_name),
+        model_rules: normalized_model_rules,
         sort: normalized_sort,
         url: normalized_url,
         auth_type: normalized_auth_type,
@@ -1053,6 +1088,7 @@ pub(crate) fn update_aggregate_api(
     key: Option<String>,
     provider_type: Option<String>,
     supplier_name: Option<String>,
+    model_rules: Option<String>,
     sort: Option<i64>,
     status: Option<String>,
     auth_type: Option<String>,
@@ -1098,6 +1134,12 @@ pub(crate) fn update_aggregate_api(
     storage
         .update_aggregate_api_supplier_name(api_id, Some(normalized_supplier_name.as_str()))
         .map_err(|err| err.to_string())?;
+    if model_rules.is_some() {
+        let normalized_model_rules = normalize_model_rules(model_rules)?;
+        storage
+            .update_aggregate_api_model_rules(api_id, normalized_model_rules.as_deref())
+            .map_err(|err| err.to_string())?;
+    }
     if sort.is_some() {
         storage
             .update_aggregate_api_sort(api_id, normalize_sort(sort))

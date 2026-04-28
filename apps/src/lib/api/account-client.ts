@@ -116,6 +116,7 @@ export interface ManagedModelPayload {
 interface AggregateApiPayload {
   providerType?: string | null;
   supplierName?: string | null;
+  modelRules?: string | null;
   sort?: number | null;
   status?: string | null;
   url?: string | null;
@@ -458,6 +459,7 @@ export const accountClient = {
       withAddr({
         providerType: params.providerType || null,
         supplierName: params.supplierName || null,
+        modelRules: params.modelRules || null,
         sort: typeof params.sort === "number" ? params.sort : null,
         status: params.status || null,
         url: params.url || null,
@@ -486,6 +488,7 @@ export const accountClient = {
         id: apiId,
         providerType: params.providerType || null,
         supplierName: params.supplierName || null,
+        modelRules: params.modelRules || null,
         sort: typeof params.sort === "number" ? params.sort : null,
         status: params.status || null,
         url: params.url || null,

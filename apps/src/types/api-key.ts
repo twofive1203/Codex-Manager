@@ -28,6 +28,7 @@ export interface AggregateApi {
   id: string;
   providerType: string;
   supplierName: string | null;
+  modelRules: string | null;
   sort: number;
   url: string;
   authType: string;

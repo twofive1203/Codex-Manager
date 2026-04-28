@@ -413,6 +413,7 @@ pub struct AggregateApiSummary {
     pub id: String,
     pub provider_type: String,
     pub supplier_name: Option<String>,
+    pub model_rules: Option<String>,
     pub sort: i64,
     pub url: String,
     pub auth_type: String,

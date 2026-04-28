@@ -14,6 +14,7 @@ use crate::aggregate_api::{
 use crate::gateway::request_log::RequestLogUsage;
 
 const AGGREGATE_API_RETRY_ATTEMPTS_PER_CHANNEL: usize = 3;
+const ENV_AGGREGATE_MODEL_PROVIDER_RULES: &str = "CODEXMANAGER_AGGREGATE_MODEL_PROVIDER_RULES";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -424,6 +425,93 @@ fn normalize_provider_type_value(value: &str) -> String {
     }
 }
 
+fn default_provider_type_for_protocol(protocol_type: &str) -> &'static str {
+    match protocol_type {
+        "anthropic_native" => AGGREGATE_API_PROVIDER_CLAUDE,
+        "gemini_native" => AGGREGATE_API_PROVIDER_GEMINI,
+        _ => AGGREGATE_API_PROVIDER_CODEX,
+    }
+}
+
+fn model_pattern_matches(pattern: &str, model: &str) -> bool {
+    let pattern = pattern.trim().to_ascii_lowercase();
+    let model = model.trim().to_ascii_lowercase();
+    if pattern.is_empty() || model.is_empty() {
+        return false;
+    }
+    if pattern == "*" {
+        return true;
+    }
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    if parts.len() == 1 {
+        return model == pattern;
+    }
+    let mut cursor = 0usize;
+    for (idx, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if idx == 0 && !pattern.starts_with('*') {
+            if !model[cursor..].starts_with(part) {
+                return false;
+            }
+            cursor += part.len();
+            continue;
+        }
+        if idx == parts.len() - 1 && !pattern.ends_with('*') {
+            return model[cursor..].ends_with(part);
+        }
+        let Some(found) = model[cursor..].find(part) else {
+            return false;
+        };
+        cursor += found + part.len();
+    }
+    true
+}
+
+fn resolve_provider_type_for_request(protocol_type: &str, model: Option<&str>) -> String {
+    let default_provider = default_provider_type_for_protocol(protocol_type).to_string();
+    let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
+        return default_provider;
+    };
+    let raw = std::env::var(ENV_AGGREGATE_MODEL_PROVIDER_RULES).unwrap_or_default();
+    if raw.trim().is_empty() {
+        return default_provider;
+    }
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((pattern, provider_raw)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if !model_pattern_matches(pattern, model) {
+            continue;
+        }
+        return normalize_provider_type_value(provider_raw);
+    }
+    default_provider
+}
+
+fn candidate_matches_model_rules(candidate: &AggregateApi, model: Option<&str>) -> bool {
+    let Some(raw_rules) = candidate
+        .model_rules
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return true;
+    };
+    let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    raw_rules.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#') && model_pattern_matches(trimmed, model)
+    })
+}
+
 /// 函数 `first_upstream_header`
 ///
 /// 作者: gaohongshun
@@ -634,13 +722,10 @@ fn build_aggregate_api_request(
 pub(crate) fn resolve_aggregate_api_rotation_candidates(
     storage: &Storage,
     protocol_type: &str,
+    model: Option<&str>,
     aggregate_api_id: Option<&str>,
 ) -> Result<Vec<AggregateApi>, String> {
-    let provider_type = match protocol_type {
-        "anthropic_native" => AGGREGATE_API_PROVIDER_CLAUDE,
-        "gemini_native" => AGGREGATE_API_PROVIDER_GEMINI,
-        _ => AGGREGATE_API_PROVIDER_CODEX,
-    };
+    let provider_type = resolve_provider_type_for_request(protocol_type, model);
 
     let mut candidates = storage
         .list_aggregate_apis()
@@ -649,6 +734,7 @@ pub(crate) fn resolve_aggregate_api_rotation_candidates(
         .filter(|api| {
             api.status == "active"
                 && normalize_provider_type_value(api.provider_type.as_str()) == provider_type
+                && candidate_matches_model_rules(api, model)
         })
         .collect::<Vec<_>>();
     candidates = normalize_candidate_order(candidates);
@@ -1129,6 +1215,7 @@ mod bridge_tests {
             id: id.to_string(),
             provider_type: AGGREGATE_API_PROVIDER_CODEX.to_string(),
             supplier_name: None,
+            model_rules: None,
             sort,
             url: format!("https://{id}.example.com"),
             auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
@@ -1285,7 +1372,8 @@ mod tests {
 
     use super::{
         build_upstream_url, effective_action_path, resolve_aggregate_api_rotation_candidates,
-        resolve_passthrough_sse_protocol,
+        resolve_passthrough_sse_protocol, resolve_provider_type_for_request,
+        ENV_AGGREGATE_MODEL_PROVIDER_RULES,
     };
     use crate::aggregate_api::{
         AGGREGATE_API_AUTH_APIKEY, AGGREGATE_API_PROVIDER_CLAUDE, AGGREGATE_API_PROVIDER_CODEX,
@@ -1298,6 +1386,7 @@ mod tests {
             id: "agg-path-test".to_string(),
             provider_type: "claude".to_string(),
             supplier_name: Some("test".to_string()),
+            model_rules: None,
             sort: 0,
             url: "https://open.bigmodel.cn/api/anthropic".to_string(),
             auth_type: "apikey".to_string(),
@@ -1368,6 +1457,7 @@ mod tests {
                     id: id.to_string(),
                     provider_type: provider_type.to_string(),
                     supplier_name: Some(id.to_string()),
+                    model_rules: None,
                     sort: 0,
                     url: format!("https://{id}.example.com"),
                     auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
@@ -1383,13 +1473,106 @@ mod tests {
                 .expect("insert aggregate api");
         }
 
-        let candidates = resolve_aggregate_api_rotation_candidates(&storage, "gemini_native", None)
-            .expect("resolve gemini candidates");
+        let candidates =
+            resolve_aggregate_api_rotation_candidates(&storage, "gemini_native", None, None)
+                .expect("resolve gemini candidates");
         let candidate_ids = candidates
             .iter()
             .map(|item| item.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(candidate_ids, vec!["agg-gemini"]);
+    }
+
+    #[test]
+    fn model_provider_rules_can_override_default_provider_type() {
+        let _guard = crate::test_env_guard();
+        std::env::set_var(
+            ENV_AGGREGATE_MODEL_PROVIDER_RULES,
+            "claude*=claude\ngemini*=gemini",
+        );
+        assert_eq!(
+            resolve_provider_type_for_request("openai_compat", Some("claude-sonnet-4-20250514")),
+            AGGREGATE_API_PROVIDER_CLAUDE
+        );
+        assert_eq!(
+            resolve_provider_type_for_request("openai_compat", Some("gemini-2.5-pro")),
+            AGGREGATE_API_PROVIDER_GEMINI
+        );
+        assert_eq!(
+            resolve_provider_type_for_request("openai_compat", Some("gpt-5.4-mini")),
+            AGGREGATE_API_PROVIDER_CODEX
+        );
+    }
+
+    #[test]
+    fn aggregate_candidates_can_be_limited_by_model_rules() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        let now = now_ts();
+        storage
+            .insert_aggregate_api(&AggregateApi {
+                id: "agg-open".to_string(),
+                provider_type: AGGREGATE_API_PROVIDER_CODEX.to_string(),
+                supplier_name: Some("open".to_string()),
+                model_rules: None,
+                sort: 0,
+                url: "https://open.example.com".to_string(),
+                auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
+                auth_params_json: None,
+                action: None,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+            })
+            .expect("insert open");
+        storage
+            .insert_aggregate_api(&AggregateApi {
+                id: "agg-claude-only".to_string(),
+                provider_type: AGGREGATE_API_PROVIDER_CODEX.to_string(),
+                supplier_name: Some("claude-only".to_string()),
+                model_rules: Some("claude*".to_string()),
+                sort: 1,
+                url: "https://claude-only.example.com".to_string(),
+                auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
+                auth_params_json: None,
+                action: None,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+            })
+            .expect("insert claude only");
+
+        let for_gpt = resolve_aggregate_api_rotation_candidates(
+            &storage,
+            "openai_compat",
+            Some("gpt-5.4-mini"),
+            None,
+        )
+        .expect("resolve gpt candidates");
+        let gpt_ids = for_gpt
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(gpt_ids, vec!["agg-open"]);
+
+        let for_claude = resolve_aggregate_api_rotation_candidates(
+            &storage,
+            "openai_compat",
+            Some("claude-sonnet-4"),
+            None,
+        )
+        .expect("resolve claude candidates");
+        let claude_ids = for_claude
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(claude_ids, vec!["agg-open", "agg-claude-only"]);
     }
 
     /// 函数 `final_error_promotes_success_status_to_bad_gateway`
