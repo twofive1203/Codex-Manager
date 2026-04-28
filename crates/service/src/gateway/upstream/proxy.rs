@@ -316,6 +316,7 @@ pub(in super::super) fn proxy_validated_request(
         match super::protocol::aggregate_api::resolve_aggregate_api_rotation_candidates(
             &storage,
             protocol_type.as_str(),
+            model_for_log.as_deref(),
             aggregate_api_id.as_deref(),
         ) {
             Ok(aggregate_api_candidates) => {
