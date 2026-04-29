@@ -207,6 +207,10 @@ export function AggregateApiModal({
       .split("\n")
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
+    const normalizedSupplierName = supplierName.trim();
+    const normalizedUrl = url.trim();
+    const normalizedModelRules =
+      parsedModelRules.length > 0 ? parsedModelRules : null;
     if (!aggregateApi?.id && !key.trim()) {
       if (authType === "apikey") {
         toast.error(t("请输入聚合 API 密钥"));
@@ -270,24 +274,43 @@ export function AggregateApiModal({
         }
       }
     }
+    const normalizedAction = actionCustomEnabled ? action.trim() : null;
     setIsLoading(true);
     try {
       if (aggregateApi?.id) {
         await accountClient.updateAggregateApi(aggregateApi.id, {
           providerType,
-          supplierName,
+          supplierName: normalizedSupplierName,
           sort: parsedSort,
-          modelRules: parsedModelRules.length > 0 ? parsedModelRules : null,
-          url,
+          modelRules: normalizedModelRules,
+          url: normalizedUrl,
           key: authType === "apikey" ? key || null : null,
           authType,
           authCustomEnabled,
           authParams,
           actionCustomEnabled,
-          action: actionCustomEnabled ? action.trim() : null,
+          action: normalizedAction,
           username: authType === "userpass" ? username.trim() || null : null,
           password: authType === "userpass" ? password.trim() || null : null,
         });
+        queryClient.setQueryData<AggregateApi[]>(["aggregate-apis"], (current) =>
+          (current || []).map((item) =>
+            item.id === aggregateApi.id
+              ? {
+                  ...item,
+                  providerType,
+                  supplierName: normalizedSupplierName,
+                  sort: parsedSort,
+                  modelRules: normalizedModelRules,
+                  url: normalizedUrl,
+                  authType,
+                  authParams,
+                  action: normalizedAction,
+                  updatedAt: Math.floor(Date.now() / 1000),
+                }
+              : item,
+          ),
+        );
         toast.success(t("聚合 API 已更新"));
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["aggregate-apis"] }),
@@ -300,18 +323,45 @@ export function AggregateApiModal({
 
       const result = await accountClient.createAggregateApi({
         providerType,
-        supplierName,
+        supplierName: normalizedSupplierName,
         sort: parsedSort,
-        modelRules: parsedModelRules.length > 0 ? parsedModelRules : null,
-        url,
+        modelRules: normalizedModelRules,
+        url: normalizedUrl,
         key: authType === "apikey" ? key : null,
         authType,
         authCustomEnabled,
         authParams,
         actionCustomEnabled,
-        action: actionCustomEnabled ? action.trim() : null,
+        action: normalizedAction,
         username: authType === "userpass" ? username.trim() : null,
         password: authType === "userpass" ? password.trim() : null,
+      });
+      queryClient.setQueryData<AggregateApi[]>(["aggregate-apis"], (current) => {
+        const nextItem: AggregateApi = {
+          id: result.id,
+          providerType,
+          supplierName: normalizedSupplierName,
+          sort: parsedSort,
+          modelRules: normalizedModelRules,
+          url: normalizedUrl,
+          authType,
+          authParams,
+          action: normalizedAction,
+          status: "active",
+          createdAt: null,
+          updatedAt: null,
+          lastTestAt: null,
+          lastTestStatus: null,
+          lastTestError: null,
+        };
+        const items = current || [];
+        const existingIndex = items.findIndex((item) => item.id === result.id);
+        if (existingIndex >= 0) {
+          return items.map((item, index) =>
+            index === existingIndex ? nextItem : item,
+          );
+        }
+        return [...items, nextItem];
       });
       setGeneratedKey(result.key);
       toast.success(t("聚合 API 已创建"));
