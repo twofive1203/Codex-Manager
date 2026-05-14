@@ -1,6 +1,8 @@
 use super::{
     AccountListParams, AccountListResult, AccountSummary, ApiKeyUsageStatSummary,
-    RequestLogFilterSummaryResult, RequestLogListParams, RequestLogListResult, RequestLogSummary,
+    DashboardAdminUsageSummaryResult, DashboardDailyUsagePoint, DashboardSourceUsageSummary,
+    DashboardTokenUsageResult, DashboardUserUsageSummary, RequestLogFilterSummaryResult,
+    RequestLogListParams, RequestLogListResult, RequestLogSummary,
 };
 
 /// 函数 `account_summary_serialization_matches_compact_contract`
@@ -340,4 +342,77 @@ fn api_key_usage_stat_summary_serialization_uses_camel_case() {
     for key in ["keyId", "totalTokens", "estimatedCostUsd"] {
         assert!(obj.contains_key(key), "missing key: {key}");
     }
+}
+
+#[test]
+fn dashboard_admin_usage_summary_serialization_uses_camel_case() {
+    let usage = DashboardTokenUsageResult {
+        input_tokens: 100,
+        cached_input_tokens: 20,
+        output_tokens: 50,
+        reasoning_output_tokens: 5,
+        total_tokens: 130,
+        estimated_cost_usd: 0.42,
+        request_count: 3,
+        success_count: 2,
+        error_count: 1,
+    };
+    let result = DashboardAdminUsageSummaryResult {
+        range_start_ts: 1_700_000_000,
+        range_end_ts: 1_700_086_400,
+        today_start_ts: 1_700_000_000,
+        today_end_ts: 1_700_086_400,
+        today_usage: usage.clone(),
+        daily_usage: vec![DashboardDailyUsagePoint {
+            day_start_ts: 1_700_000_000,
+            day_end_ts: 1_700_086_400,
+            usage: usage.clone(),
+        }],
+        users: vec![DashboardUserUsageSummary {
+            user_id: "usr-1".to_string(),
+            username: Some("member-one".to_string()),
+            display_name: None,
+            role: Some("member".to_string()),
+            status: Some("active".to_string()),
+            wallet_available_credit_micros: Some(1_000_000),
+            today_usage: usage.clone(),
+            range_usage: usage.clone(),
+        }],
+        openai_accounts: vec![DashboardSourceUsageSummary {
+            source_kind: "openai_account".to_string(),
+            source_id: "acc-1".to_string(),
+            name: Some("main".to_string()),
+            status: Some("active".to_string()),
+            provider: Some("openai".to_string()),
+            today_usage: usage.clone(),
+            range_usage: usage.clone(),
+        }],
+        aggregate_apis: vec![DashboardSourceUsageSummary {
+            source_kind: "aggregate_api".to_string(),
+            source_id: "agg-1".to_string(),
+            name: Some("supplier".to_string()),
+            status: Some("active".to_string()),
+            provider: Some("openai-compatible".to_string()),
+            today_usage: usage.clone(),
+            range_usage: usage,
+        }],
+    };
+
+    let value = serde_json::to_value(result).expect("serialize dashboard admin usage");
+    let obj = value.as_object().expect("dashboard admin usage object");
+    for key in [
+        "rangeStartTs",
+        "rangeEndTs",
+        "todayStartTs",
+        "todayEndTs",
+        "todayUsage",
+        "dailyUsage",
+        "openaiAccounts",
+        "aggregateApis",
+    ] {
+        assert!(obj.contains_key(key), "missing key: {key}");
+    }
+    assert!(obj["todayUsage"].get("inputTokens").is_some());
+    assert!(obj["users"][0].get("walletAvailableCreditMicros").is_some());
+    assert!(obj["openaiAccounts"][0].get("sourceKind").is_some());
 }

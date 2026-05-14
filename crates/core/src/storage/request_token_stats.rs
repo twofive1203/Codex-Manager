@@ -1,9 +1,93 @@
-use rusqlite::Result;
+use rusqlite::{params, Result, Row};
 
 use super::{
-    ApiKeyModelTokenUsageSummary, ApiKeyTokenUsageSummary, RequestLogTodaySummary,
-    RequestTokenStat, Storage, TokenUsageSummary,
+    ApiKeyModelTokenUsageSummary, ApiKeyTokenUsageSummary, DailyTokenUsageRollup,
+    RequestLogTodaySummary, RequestTokenStat, SourceTokenUsageRollup, Storage, TokenUsageRollup,
+    TokenUsageSummary, UserTokenUsageRollup,
 };
+
+const TOKEN_ROLLUP_COLUMNS: &str = "
+    IFNULL(SUM(IFNULL(t.input_tokens, 0)), 0) AS input_tokens,
+    IFNULL(SUM(IFNULL(t.cached_input_tokens, 0)), 0) AS cached_input_tokens,
+    IFNULL(SUM(IFNULL(t.output_tokens, 0)), 0) AS output_tokens,
+    IFNULL(SUM(IFNULL(t.reasoning_output_tokens, 0)), 0) AS reasoning_output_tokens,
+    IFNULL(
+        SUM(
+            CASE
+                WHEN t.total_tokens IS NOT NULL THEN
+                    CASE WHEN t.total_tokens > 0 THEN t.total_tokens ELSE 0 END
+                ELSE
+                    CASE
+                        WHEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0) > 0
+                            THEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0)
+                        ELSE 0
+                    END
+            END
+        ),
+        0
+    ) AS total_tokens,
+    IFNULL(SUM(IFNULL(t.estimated_cost_usd, 0.0)), 0.0) AS estimated_cost_usd,
+    COUNT(DISTINCT r.id) AS request_count,
+    COUNT(DISTINCT CASE WHEN r.status_code >= 200 AND r.status_code <= 299 THEN r.id END) AS success_count,
+    COUNT(DISTINCT CASE WHEN IFNULL(r.status_code, 0) >= 400 OR TRIM(IFNULL(r.error, '')) <> '' THEN r.id END) AS error_count";
+
+const USER_OWNER_EXPR: &str =
+    "COALESCE(NULLIF(TRIM(charge.owner_id), ''), NULLIF(TRIM(owner.owner_user_id), ''))";
+
+// User attribution prefers the request_charge wallet owner. The api_key_owners
+// fallback is current-owner based, so old uncharged logs are approximate.
+const USER_OWNER_JOINS: &str = "
+    LEFT JOIN (
+        SELECT l.request_log_id, MIN(w.owner_id) AS owner_id
+        FROM app_wallet_ledger_entries l
+        JOIN app_wallets w ON w.id = l.wallet_id
+        WHERE l.entry_kind = 'request_charge'
+          AND w.owner_kind = 'user'
+        GROUP BY l.request_log_id
+    ) charge ON charge.request_log_id = r.id
+    LEFT JOIN api_key_owners owner ON owner.key_id = r.key_id AND owner.owner_kind = 'user'";
+
+fn token_usage_rollup_from_row(row: &Row<'_>, offset: usize) -> Result<TokenUsageRollup> {
+    Ok(TokenUsageRollup {
+        input_tokens: row.get::<_, i64>(offset)?.max(0),
+        cached_input_tokens: row.get::<_, i64>(offset + 1)?.max(0),
+        output_tokens: row.get::<_, i64>(offset + 2)?.max(0),
+        reasoning_output_tokens: row.get::<_, i64>(offset + 3)?.max(0),
+        total_tokens: row.get::<_, i64>(offset + 4)?.max(0),
+        estimated_cost_usd: row.get::<_, f64>(offset + 5)?.max(0.0),
+        request_count: row.get::<_, i64>(offset + 6)?.max(0),
+        success_count: row.get::<_, i64>(offset + 7)?.max(0),
+        error_count: row.get::<_, i64>(offset + 8)?.max(0),
+    })
+}
+
+fn source_id_expr(source_kind: &str) -> Option<&'static str> {
+    match source_kind {
+        "openai_account" => Some(
+            // Prefer actual_source_* written by routing. Legacy account_id is only
+            // used when actual source metadata was not captured.
+            "CASE
+                WHEN r.actual_source_kind = 'openai_account'
+                    THEN COALESCE(NULLIF(TRIM(r.actual_source_id), ''), NULLIF(TRIM(r.account_id), ''))
+                WHEN r.actual_source_kind IS NULL OR TRIM(r.actual_source_kind) = ''
+                    THEN NULLIF(TRIM(r.account_id), '')
+                ELSE NULL
+             END",
+        ),
+        "aggregate_api" => Some(
+            // Prefer actual_source_* written by routing. Legacy aggregate API
+            // context is only used when actual source metadata was not captured.
+            "CASE
+                WHEN r.actual_source_kind = 'aggregate_api'
+                    THEN COALESCE(NULLIF(TRIM(r.actual_source_id), ''), NULLIF(TRIM(r.initial_aggregate_api_id), ''))
+                WHEN r.actual_source_kind IS NULL OR TRIM(r.actual_source_kind) = ''
+                    THEN NULLIF(TRIM(r.initial_aggregate_api_id), '')
+                ELSE NULL
+             END",
+        ),
+        _ => None,
+    }
+}
 
 impl Storage {
     /// 函数 `insert_request_token_stat`
@@ -235,6 +319,169 @@ impl Storage {
                 reasoning_output_tokens: row.get::<_, i64>(5)?.max(0),
                 total_tokens: row.get::<_, i64>(6)?.max(0),
                 estimated_cost_usd: row.get::<_, f64>(7)?.max(0.0),
+            });
+        }
+        Ok(items)
+    }
+
+    pub fn summarize_request_token_stats_daily(
+        &self,
+        start_ts: i64,
+        end_ts: i64,
+        bucket_seconds: i64,
+    ) -> Result<Vec<DailyTokenUsageRollup>> {
+        if end_ts <= start_ts {
+            return Ok(Vec::new());
+        }
+        let bucket_seconds = bucket_seconds.max(1);
+        let sql = format!(
+            "SELECT
+                ?1 + CAST((r.created_at - ?1) / ?3 AS INTEGER) * ?3 AS bucket_start,
+                MIN(?1 + (CAST((r.created_at - ?1) / ?3 AS INTEGER) + 1) * ?3, ?2) AS bucket_end,
+                {TOKEN_ROLLUP_COLUMNS}
+             FROM request_logs r
+             LEFT JOIN request_token_stats t ON t.request_log_id = r.id
+             WHERE r.created_at >= ?1 AND r.created_at < ?2
+             GROUP BY bucket_start
+             ORDER BY bucket_start ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![start_ts, end_ts, bucket_seconds])?;
+        let mut items = Vec::new();
+        while let Some(row) = rows.next()? {
+            items.push(DailyTokenUsageRollup {
+                day_start_ts: row.get(0)?,
+                day_end_ts: row.get(1)?,
+                usage: token_usage_rollup_from_row(row, 2)?,
+            });
+        }
+        Ok(items)
+    }
+
+    pub fn summarize_request_token_stats_by_user_between(
+        &self,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<Vec<UserTokenUsageRollup>> {
+        if end_ts <= start_ts {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            "SELECT
+                {USER_OWNER_EXPR} AS user_id,
+                {TOKEN_ROLLUP_COLUMNS}
+             FROM request_logs r
+             LEFT JOIN request_token_stats t ON t.request_log_id = r.id
+             {USER_OWNER_JOINS}
+             WHERE r.created_at >= ?1 AND r.created_at < ?2
+               AND {USER_OWNER_EXPR} IS NOT NULL
+             GROUP BY user_id
+             ORDER BY total_tokens DESC, user_id ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![start_ts, end_ts])?;
+        let mut items = Vec::new();
+        while let Some(row) = rows.next()? {
+            items.push(UserTokenUsageRollup {
+                user_id: row.get(0)?,
+                usage: token_usage_rollup_from_row(row, 1)?,
+            });
+        }
+        Ok(items)
+    }
+
+    pub fn summarize_request_token_stats_for_user_between(
+        &self,
+        user_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<TokenUsageRollup> {
+        if end_ts <= start_ts || user_id.trim().is_empty() {
+            return Ok(TokenUsageRollup::default());
+        }
+        let sql = format!(
+            "SELECT
+                {TOKEN_ROLLUP_COLUMNS}
+             FROM request_logs r
+             LEFT JOIN request_token_stats t ON t.request_log_id = r.id
+             {USER_OWNER_JOINS}
+             WHERE r.created_at >= ?1 AND r.created_at < ?2
+               AND {USER_OWNER_EXPR} = ?3"
+        );
+        self.conn
+            .query_row(&sql, params![start_ts, end_ts, user_id.trim()], |row| {
+                token_usage_rollup_from_row(row, 0)
+            })
+    }
+
+    pub fn summarize_request_token_stats_daily_for_user(
+        &self,
+        user_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+        bucket_seconds: i64,
+    ) -> Result<Vec<DailyTokenUsageRollup>> {
+        if end_ts <= start_ts || user_id.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let bucket_seconds = bucket_seconds.max(1);
+        let sql = format!(
+            "SELECT
+                ?1 + CAST((r.created_at - ?1) / ?3 AS INTEGER) * ?3 AS bucket_start,
+                MIN(?1 + (CAST((r.created_at - ?1) / ?3 AS INTEGER) + 1) * ?3, ?2) AS bucket_end,
+                {TOKEN_ROLLUP_COLUMNS}
+             FROM request_logs r
+             LEFT JOIN request_token_stats t ON t.request_log_id = r.id
+             {USER_OWNER_JOINS}
+             WHERE r.created_at >= ?1 AND r.created_at < ?2
+               AND {USER_OWNER_EXPR} = ?4
+             GROUP BY bucket_start
+             ORDER BY bucket_start ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![start_ts, end_ts, bucket_seconds, user_id.trim()])?;
+        let mut items = Vec::new();
+        while let Some(row) = rows.next()? {
+            items.push(DailyTokenUsageRollup {
+                day_start_ts: row.get(0)?,
+                day_end_ts: row.get(1)?,
+                usage: token_usage_rollup_from_row(row, 2)?,
+            });
+        }
+        Ok(items)
+    }
+
+    pub fn summarize_request_token_stats_by_source_between(
+        &self,
+        source_kind: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<Vec<SourceTokenUsageRollup>> {
+        if end_ts <= start_ts {
+            return Ok(Vec::new());
+        }
+        let Some(source_id_expr) = source_id_expr(source_kind) else {
+            return Ok(Vec::new());
+        };
+        let sql = format!(
+            "SELECT
+                {source_id_expr} AS source_id,
+                {TOKEN_ROLLUP_COLUMNS}
+             FROM request_logs r
+             LEFT JOIN request_token_stats t ON t.request_log_id = r.id
+             WHERE r.created_at >= ?1 AND r.created_at < ?2
+               AND {source_id_expr} IS NOT NULL
+             GROUP BY source_id
+             ORDER BY total_tokens DESC, source_id ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![start_ts, end_ts])?;
+        let mut items = Vec::new();
+        while let Some(row) = rows.next()? {
+            items.push(SourceTokenUsageRollup {
+                source_kind: source_kind.to_string(),
+                source_id: row.get(0)?,
+                usage: token_usage_rollup_from_row(row, 1)?,
             });
         }
         Ok(items)

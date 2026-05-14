@@ -1,15 +1,20 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use chrono::{Duration, Local, LocalResult, TimeZone};
 use codexmanager_core::rpc::types::{
-    ApiKeySummary, MemberDashboardAlert, MemberDashboardApiKeySummary, MemberDashboardKeyUsage,
+    ApiKeySummary, DashboardAdminUsageSummaryResult, DashboardDailyUsagePoint,
+    DashboardSourceUsageSummary, DashboardTokenUsageResult, DashboardUserUsageSummary,
+    MemberDashboardAlert, MemberDashboardApiKeySummary, MemberDashboardKeyUsage,
     MemberDashboardModelUsage, MemberDashboardSummaryResult, MemberDashboardUsagePoint,
     MemberDashboardUsageToday, MemberDashboardWalletResult, ModelInfo, RequestLogListParams,
+};
+use codexmanager_core::storage::{
+    DailyTokenUsageRollup, SourceTokenUsageRollup, TokenUsageRollup, UserTokenUsageRollup,
 };
 use serde_json::json;
 
 use crate::{
-    apikey_list, apikey_models, quota::model_pricing, requestlog_list, requestlog_summary,
-    requestlog_today_summary, storage_helpers, RpcActor,
+    apikey_list, apikey_models, quota::model_pricing, requestlog_list, storage_helpers, RpcActor,
 };
 
 const TREND_DAYS: i64 = 7;
@@ -17,6 +22,348 @@ const MEMBER_TOP_KEY_LIMIT: usize = 8;
 const MEMBER_TOP_MODEL_LIMIT: usize = 6;
 const MEMBER_RECENT_LOG_LIMIT: i64 = 8;
 const LOW_WALLET_CREDIT_MICROS: i64 = 1_000_000;
+const DAY_SECONDS: i64 = 24 * 60 * 60;
+const ADMIN_USAGE_RANGE_DAYS: i64 = 7;
+
+pub(crate) fn read_admin_usage_summary(
+    actor: &RpcActor,
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
+) -> Result<DashboardAdminUsageSummaryResult, String> {
+    if !actor.is_admin() {
+        return Err("permission_denied: admin dashboard usage requires admin session".to_string());
+    }
+    crate::initialize_storage_if_needed()?;
+    let storage =
+        storage_helpers::open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let (today_start, today_end) = local_day_bounds_ts()?;
+    let range_start = start_ts
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| today_start.saturating_sub((ADMIN_USAGE_RANGE_DAYS - 1) * DAY_SECONDS));
+    let range_end = end_ts
+        .filter(|value| *value > range_start)
+        .unwrap_or(today_end);
+
+    let today_usage = storage
+        .summarize_request_token_stats_daily(today_start, today_end, DAY_SECONDS)
+        .map_err(|err| format!("summarize today usage failed: {err}"))?
+        .into_iter()
+        .next()
+        .map(|item| item.usage)
+        .unwrap_or_default();
+    let daily_usage = fill_daily_usage(
+        range_start,
+        range_end,
+        DAY_SECONDS,
+        storage
+            .summarize_request_token_stats_daily(range_start, range_end, DAY_SECONDS)
+            .map_err(|err| format!("summarize daily usage failed: {err}"))?,
+    );
+    let users = build_dashboard_user_summaries(
+        &storage,
+        storage
+            .summarize_request_token_stats_by_user_between(today_start, today_end)
+            .map_err(|err| format!("summarize today user usage failed: {err}"))?,
+        storage
+            .summarize_request_token_stats_by_user_between(range_start, range_end)
+            .map_err(|err| format!("summarize range user usage failed: {err}"))?,
+    )?;
+    let openai_accounts = build_dashboard_source_summaries(
+        "openai_account",
+        account_source_metadata(&storage)?,
+        storage
+            .summarize_request_token_stats_by_source_between(
+                "openai_account",
+                today_start,
+                today_end,
+            )
+            .map_err(|err| format!("summarize today account usage failed: {err}"))?,
+        storage
+            .summarize_request_token_stats_by_source_between(
+                "openai_account",
+                range_start,
+                range_end,
+            )
+            .map_err(|err| format!("summarize range account usage failed: {err}"))?,
+    );
+    let aggregate_apis = build_dashboard_source_summaries(
+        "aggregate_api",
+        aggregate_source_metadata(&storage)?,
+        storage
+            .summarize_request_token_stats_by_source_between(
+                "aggregate_api",
+                today_start,
+                today_end,
+            )
+            .map_err(|err| format!("summarize today aggregate API usage failed: {err}"))?,
+        storage
+            .summarize_request_token_stats_by_source_between(
+                "aggregate_api",
+                range_start,
+                range_end,
+            )
+            .map_err(|err| format!("summarize range aggregate API usage failed: {err}"))?,
+    );
+
+    Ok(DashboardAdminUsageSummaryResult {
+        range_start_ts: range_start,
+        range_end_ts: range_end,
+        today_start_ts: today_start,
+        today_end_ts: today_end,
+        today_usage: dashboard_usage(&today_usage),
+        daily_usage,
+        users,
+        openai_accounts,
+        aggregate_apis,
+    })
+}
+
+#[derive(Debug, Clone, Default)]
+struct SourceMetadata {
+    name: Option<String>,
+    status: Option<String>,
+    provider: Option<String>,
+}
+
+fn local_day_bounds_ts() -> Result<(i64, i64), String> {
+    let now = Local::now();
+    let today = now.date_naive();
+    let start_naive = today
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| "build local start-of-day failed".to_string())?;
+    let tomorrow_naive = (today + Duration::days(1))
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| "build local end-of-day failed".to_string())?;
+    let start = match Local.from_local_datetime(&start_naive) {
+        LocalResult::Single(value) => value.timestamp(),
+        LocalResult::Ambiguous(a, b) => a.timestamp().min(b.timestamp()),
+        LocalResult::None => now.timestamp(),
+    };
+    let end = match Local.from_local_datetime(&tomorrow_naive) {
+        LocalResult::Single(value) => value.timestamp(),
+        LocalResult::Ambiguous(a, b) => a.timestamp().max(b.timestamp()),
+        LocalResult::None => start + DAY_SECONDS,
+    };
+    Ok((start, end.max(start)))
+}
+
+fn dashboard_usage(usage: &TokenUsageRollup) -> DashboardTokenUsageResult {
+    DashboardTokenUsageResult {
+        input_tokens: usage.input_tokens.max(0),
+        cached_input_tokens: usage.cached_input_tokens.max(0),
+        output_tokens: usage.output_tokens.max(0),
+        reasoning_output_tokens: usage.reasoning_output_tokens.max(0),
+        total_tokens: usage.total_tokens.max(0),
+        estimated_cost_usd: usage.estimated_cost_usd.max(0.0),
+        request_count: usage.request_count.max(0),
+        success_count: usage.success_count.max(0),
+        error_count: usage.error_count.max(0),
+    }
+}
+
+fn fill_daily_usage(
+    start_ts: i64,
+    end_ts: i64,
+    bucket_seconds: i64,
+    items: Vec<DailyTokenUsageRollup>,
+) -> Vec<DashboardDailyUsagePoint> {
+    let bucket_seconds = bucket_seconds.max(1);
+    let mut by_start = items
+        .into_iter()
+        .map(|item| (item.day_start_ts, item))
+        .collect::<BTreeMap<_, _>>();
+    let mut cursor = start_ts;
+    let mut result = Vec::new();
+    while cursor < end_ts {
+        let next = cursor.saturating_add(bucket_seconds).min(end_ts);
+        if let Some(item) = by_start.remove(&cursor) {
+            result.push(DashboardDailyUsagePoint {
+                day_start_ts: item.day_start_ts,
+                day_end_ts: item.day_end_ts,
+                usage: dashboard_usage(&item.usage),
+            });
+        } else {
+            result.push(DashboardDailyUsagePoint {
+                day_start_ts: cursor,
+                day_end_ts: next,
+                usage: DashboardTokenUsageResult::default(),
+            });
+        }
+        cursor = next;
+    }
+    result
+}
+
+fn build_dashboard_user_summaries(
+    storage: &codexmanager_core::storage::Storage,
+    today_items: Vec<UserTokenUsageRollup>,
+    range_items: Vec<UserTokenUsageRollup>,
+) -> Result<Vec<DashboardUserUsageSummary>, String> {
+    let today_map = today_items
+        .into_iter()
+        .map(|item| (item.user_id, item.usage))
+        .collect::<HashMap<_, _>>();
+    let range_map = range_items
+        .into_iter()
+        .map(|item| (item.user_id, item.usage))
+        .collect::<HashMap<_, _>>();
+    let users = storage
+        .list_app_users()
+        .map_err(|err| format!("list app users failed: {err}"))?;
+    let wallets = storage
+        .list_wallets()
+        .map_err(|err| format!("list app wallets failed: {err}"))?
+        .into_iter()
+        .filter(|wallet| wallet.owner_kind == "user")
+        .map(|wallet| (wallet.owner_id.clone(), wallet))
+        .collect::<HashMap<_, _>>();
+    let mut user_ids = users
+        .iter()
+        .map(|user| user.id.clone())
+        .collect::<HashSet<_>>();
+    user_ids.extend(today_map.keys().cloned());
+    user_ids.extend(range_map.keys().cloned());
+    let user_map = users
+        .into_iter()
+        .map(|user| (user.id.clone(), user))
+        .collect::<HashMap<_, _>>();
+
+    let mut results = user_ids
+        .into_iter()
+        .map(|user_id| {
+            let user = user_map.get(user_id.as_str());
+            let wallet_available = wallets
+                .get(user_id.as_str())
+                .map(|wallet| wallet.balance_credit_micros - wallet.frozen_credit_micros);
+            DashboardUserUsageSummary {
+                user_id: user_id.clone(),
+                username: user.map(|item| item.username.clone()),
+                display_name: user.and_then(|item| item.display_name.clone()),
+                role: user.map(|item| item.role.clone()),
+                status: user.map(|item| item.status.clone()),
+                wallet_available_credit_micros: wallet_available,
+                today_usage: dashboard_usage(
+                    today_map
+                        .get(user_id.as_str())
+                        .unwrap_or(&TokenUsageRollup::default()),
+                ),
+                range_usage: dashboard_usage(
+                    range_map
+                        .get(user_id.as_str())
+                        .unwrap_or(&TokenUsageRollup::default()),
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+    results.sort_by(|a, b| {
+        b.today_usage
+            .total_tokens
+            .cmp(&a.today_usage.total_tokens)
+            .then_with(|| b.range_usage.total_tokens.cmp(&a.range_usage.total_tokens))
+            .then_with(|| a.user_id.cmp(&b.user_id))
+    });
+    Ok(results)
+}
+
+fn account_source_metadata(
+    storage: &codexmanager_core::storage::Storage,
+) -> Result<HashMap<String, SourceMetadata>, String> {
+    Ok(storage
+        .list_accounts()
+        .map_err(|err| format!("list accounts failed: {err}"))?
+        .into_iter()
+        .map(|account| {
+            (
+                account.id,
+                SourceMetadata {
+                    name: Some(account.label),
+                    status: Some(account.status),
+                    provider: Some("openai".to_string()),
+                },
+            )
+        })
+        .collect())
+}
+
+fn aggregate_source_metadata(
+    storage: &codexmanager_core::storage::Storage,
+) -> Result<HashMap<String, SourceMetadata>, String> {
+    Ok(storage
+        .list_aggregate_apis()
+        .map_err(|err| format!("list aggregate APIs failed: {err}"))?
+        .into_iter()
+        .map(|api| {
+            let name = api
+                .supplier_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(api.url.as_str())
+                .to_string();
+            (
+                api.id,
+                SourceMetadata {
+                    name: Some(name),
+                    status: Some(api.status),
+                    provider: Some(api.provider_type),
+                },
+            )
+        })
+        .collect())
+}
+
+fn build_dashboard_source_summaries(
+    source_kind: &str,
+    metadata: HashMap<String, SourceMetadata>,
+    today_items: Vec<SourceTokenUsageRollup>,
+    range_items: Vec<SourceTokenUsageRollup>,
+) -> Vec<DashboardSourceUsageSummary> {
+    let today_map = today_items
+        .into_iter()
+        .map(|item| (item.source_id, item.usage))
+        .collect::<HashMap<_, _>>();
+    let range_map = range_items
+        .into_iter()
+        .map(|item| (item.source_id, item.usage))
+        .collect::<HashMap<_, _>>();
+    let mut ids = metadata.keys().cloned().collect::<HashSet<_>>();
+    ids.extend(today_map.keys().cloned());
+    ids.extend(range_map.keys().cloned());
+    let mut results = ids
+        .into_iter()
+        .map(|source_id| {
+            let meta = metadata
+                .get(source_id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            DashboardSourceUsageSummary {
+                source_kind: source_kind.to_string(),
+                source_id: source_id.clone(),
+                name: meta.name,
+                status: meta.status,
+                provider: meta.provider,
+                today_usage: dashboard_usage(
+                    today_map
+                        .get(source_id.as_str())
+                        .unwrap_or(&TokenUsageRollup::default()),
+                ),
+                range_usage: dashboard_usage(
+                    range_map
+                        .get(source_id.as_str())
+                        .unwrap_or(&TokenUsageRollup::default()),
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+    results.sort_by(|a, b| {
+        b.today_usage
+            .total_tokens
+            .cmp(&a.today_usage.total_tokens)
+            .then_with(|| b.range_usage.total_tokens.cmp(&a.range_usage.total_tokens))
+            .then_with(|| a.source_id.cmp(&b.source_id))
+    });
+    results
+}
 
 pub(crate) fn read_member_dashboard_summary(
     actor: &RpcActor,
@@ -53,37 +400,27 @@ pub(crate) fn read_member_dashboard_summary(
     let api_key_summary = build_api_key_summary(&api_keys);
     let wallet = read_member_wallet(&user_id)?;
 
-    let today_tokens = requestlog_today_summary::read_requestlog_today_summary_for_key_ids(
-        Some(day_start),
-        Some(day_end),
-        &key_ids,
-    )?;
-    let today_log_summary = requestlog_summary::read_request_log_filter_summary_for_key_ids(
-        RequestLogListParams {
-            page: 1,
-            page_size: 20,
-            query: None,
-            status_filter: Some("all".to_string()),
-            start_ts: Some(day_start),
-            end_ts: Some(day_end),
-        },
-        &key_ids,
-    )?;
+    let storage =
+        storage_helpers::open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let today_usage_rollup = storage
+        .summarize_request_token_stats_for_user_between(&user_id, day_start, day_end)
+        .map_err(|err| format!("summarize member token usage failed: {err}"))?;
     let usage_today = MemberDashboardUsageToday {
-        input_tokens: today_tokens.input_tokens,
-        cached_input_tokens: today_tokens.cached_input_tokens,
-        output_tokens: today_tokens.output_tokens,
-        reasoning_output_tokens: today_tokens.reasoning_output_tokens,
-        total_tokens: today_tokens.today_tokens,
-        estimated_cost_usd: today_tokens.estimated_cost,
-        total_count: today_log_summary.total_count,
-        success_count: today_log_summary.success_count,
-        error_count: today_log_summary.error_count,
-        success_rate: (today_log_summary.total_count > 0)
-            .then(|| today_log_summary.success_count as f64 / today_log_summary.total_count as f64),
+        input_tokens: today_usage_rollup.input_tokens,
+        cached_input_tokens: today_usage_rollup.cached_input_tokens,
+        output_tokens: today_usage_rollup.output_tokens,
+        reasoning_output_tokens: today_usage_rollup.reasoning_output_tokens,
+        total_tokens: today_usage_rollup.total_tokens,
+        estimated_cost_usd: today_usage_rollup.estimated_cost_usd,
+        total_count: today_usage_rollup.request_count,
+        success_count: today_usage_rollup.success_count,
+        error_count: today_usage_rollup.error_count,
+        success_rate: (today_usage_rollup.request_count > 0).then(|| {
+            today_usage_rollup.success_count as f64 / today_usage_rollup.request_count as f64
+        }),
     };
 
-    let usage_trend_7d = read_usage_trend_7d(day_start, day_end, &key_ids)?;
+    let usage_trend_7d = read_usage_trend_7d(&user_id, day_start, day_end)?;
     let (top_keys, top_models) =
         read_member_usage_breakdown(&api_keys, &key_id_set, day_start, day_end)?;
     let available_models = read_available_models_with_price_summary()?;
@@ -229,30 +566,31 @@ fn build_api_key_summary(api_keys: &[ApiKeySummary]) -> MemberDashboardApiKeySum
 }
 
 fn read_usage_trend_7d(
+    user_id: &str,
     day_start: i64,
     day_end: i64,
-    key_ids: &[String],
 ) -> Result<Vec<MemberDashboardUsagePoint>, String> {
     let storage =
         storage_helpers::open_storage().ok_or_else(|| "open storage failed".to_string())?;
     let day_span = (day_end - day_start).max(1);
+    let range_start = day_start.saturating_sub((TREND_DAYS - 1) * day_span);
+    let items = storage
+        .summarize_request_token_stats_daily_for_user(user_id, range_start, day_end, day_span)
+        .map_err(|err| format!("summarize member token trend failed: {err}"))?;
+    let mut by_start = items
+        .into_iter()
+        .map(|item| (item.day_start_ts, item.usage))
+        .collect::<BTreeMap<_, _>>();
     let mut points = Vec::new();
     for offset in (0..TREND_DAYS).rev() {
         let start = day_start.saturating_sub(offset * day_span);
         let end = start.saturating_add(day_span);
-        let summary = storage
-            .summarize_request_logs_between_for_keys(start, end, key_ids)
-            .map_err(|err| format!("summarize request logs failed: {err}"))?;
-        let total_tokens = summary
-            .input_tokens
-            .saturating_sub(summary.cached_input_tokens)
-            .saturating_add(summary.output_tokens)
-            .max(0);
+        let usage = by_start.remove(&start).unwrap_or_default();
         points.push(MemberDashboardUsagePoint {
             day_start_ts: start,
             day_end_ts: end,
-            total_tokens,
-            estimated_cost_usd: summary.estimated_cost_usd.max(0.0),
+            total_tokens: usage.total_tokens.max(0),
+            estimated_cost_usd: usage.estimated_cost_usd.max(0.0),
         });
     }
     Ok(points)

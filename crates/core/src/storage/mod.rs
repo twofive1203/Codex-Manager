@@ -294,6 +294,39 @@ pub struct ApiKeyModelTokenUsageSummary {
     pub estimated_cost_usd: f64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TokenUsageRollup {
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_output_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+    pub request_count: i64,
+    pub success_count: i64,
+    pub error_count: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DailyTokenUsageRollup {
+    pub day_start_ts: i64,
+    pub day_end_ts: i64,
+    pub usage: TokenUsageRollup,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UserTokenUsageRollup {
+    pub user_id: String,
+    pub usage: TokenUsageRollup,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SourceTokenUsageRollup {
+    pub source_kind: String,
+    pub source_id: String,
+    pub usage: TokenUsageRollup,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppUser {
     pub id: String,
@@ -922,6 +955,7 @@ impl Storage {
             "049_model_catalog_string_items",
             include_str!("../../migrations/049_model_catalog_string_items.sql"),
         )?;
+        self.ensure_model_catalog_models_table()?;
         self.apply_sql_migration(
             "050_api_key_profiles_drop_azure_protocol",
             include_str!("../../migrations/050_api_key_profiles_drop_azure_protocol.sql"),

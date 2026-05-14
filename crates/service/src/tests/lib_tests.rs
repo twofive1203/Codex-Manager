@@ -305,6 +305,7 @@ fn insert_test_request_log(
 fn wallet_charge_uses_model_group_billing_model_override() {
     let _guard = test_env_guard();
     let db_path = setup_dashboard_test_db("codexmanager-model-group-billing-override");
+    set_web_auth_mode("accounts").expect("enable accounts mode");
     set_distribution_enabled(true).expect("enable distribution");
     let user = create_test_member("member-model-group-billing", Some(1_000_000));
     let key_id = create_owned_test_api_key(&user.id, "member model group key", "gpt-5-mini");
@@ -492,7 +493,7 @@ fn member_dashboard_filters_to_current_user_keys() {
 
     assert!(resp.result.get("error").is_none(), "{:?}", resp.result);
     assert_eq!(resp.result["apiKeySummary"]["totalCount"], 1);
-    assert_eq!(resp.result["usageToday"]["totalTokens"], 60);
+    assert_eq!(resp.result["usageToday"]["totalTokens"], 70);
     assert_eq!(resp.result["recentLogs"][0]["keyId"], key_one.id);
     assert_eq!(resp.result["topKeys"][0]["keyId"], key_one.id);
     assert_eq!(resp.result["topKeys"][0]["todayTokens"], 70);
@@ -583,7 +584,7 @@ fn member_dashboard_ignores_requested_user_id() {
     assert!(resp.result.get("error").is_none(), "{:?}", resp.result);
     assert_eq!(resp.result["userId"], user_one.id);
     assert_eq!(resp.result["apiKeySummary"]["totalCount"], 1);
-    assert_eq!(resp.result["usageToday"]["totalTokens"], 18);
+    assert_eq!(resp.result["usageToday"]["totalTokens"], 20);
     assert_eq!(resp.result["recentLogs"][0]["keyId"], key_one);
     assert_eq!(resp.result["topKeys"][0]["keyId"], key_one);
     assert_ne!(resp.result["recentLogs"][0]["keyId"], key_two);
@@ -640,9 +641,92 @@ fn admin_member_dashboard_can_query_requested_user() {
     assert!(resp.result.get("error").is_none(), "{:?}", resp.result);
     assert_eq!(resp.result["userId"], user_two.id);
     assert_eq!(resp.result["apiKeySummary"]["totalCount"], 1);
-    assert_eq!(resp.result["usageToday"]["totalTokens"], 55);
+    assert_eq!(resp.result["usageToday"]["totalTokens"], 60);
     assert_eq!(resp.result["recentLogs"][0]["keyId"], key_two);
     assert_ne!(resp.result["recentLogs"][0]["keyId"], key_one);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn admin_usage_summary_requires_admin_and_returns_range_rollups() {
+    let _guard = test_env_guard();
+    let db_path = setup_dashboard_test_db("codexmanager-admin-usage-summary");
+    let day_start = 1_700_000_000;
+    let day_end = day_start + 86_400;
+    let user = create_test_member("admin-usage-member", Some(2_000_000));
+    let key_id = create_owned_test_api_key(&user.id, "admin usage key", "gpt-5-mini");
+
+    insert_test_request_log(
+        &key_id,
+        "trace-admin-usage",
+        "gpt-5-mini",
+        200,
+        20,
+        5,
+        10,
+        0.03,
+        day_start + 10,
+    );
+
+    let member_resp = response_result(handle_request_with_actor(
+        rpc_request(
+            "dashboard/adminUsageSummary",
+            serde_json::json!({
+                "startTs": day_start,
+                "endTs": day_end
+            }),
+        ),
+        RpcActor::from_parts(Some(ROLE_MEMBER), Some(&user.id)),
+    ));
+    assert!(
+        rpc_error(&member_resp).contains("permission_denied"),
+        "{:?}",
+        member_resp.result
+    );
+
+    let admin_resp = response_result(handle_request_with_actor(
+        rpc_request(
+            "dashboard/adminUsageSummary",
+            serde_json::json!({
+                "startTs": day_start,
+                "endTs": day_end
+            }),
+        ),
+        RpcActor::system_admin(),
+    ));
+    assert!(
+        admin_resp.result.get("error").is_none(),
+        "{:?}",
+        admin_resp.result
+    );
+    assert_eq!(admin_resp.result["rangeStartTs"], day_start);
+    assert_eq!(admin_resp.result["rangeEndTs"], day_end);
+    assert_eq!(admin_resp.result["dailyUsage"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        admin_resp.result["dailyUsage"][0]["usage"]["totalTokens"],
+        30
+    );
+    assert_eq!(
+        admin_resp.result["dailyUsage"][0]["usage"]["requestCount"],
+        1
+    );
+
+    let user_item = admin_resp.result["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["userId"] == user.id)
+        .expect("user usage item");
+    assert_eq!(user_item["rangeUsage"]["totalTokens"], 30);
+
+    let account_item = admin_resp.result["openaiAccounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["sourceId"] == "private-account-id")
+        .expect("account usage item");
+    assert_eq!(account_item["rangeUsage"]["totalTokens"], 30);
 
     let _ = std::fs::remove_file(db_path);
 }

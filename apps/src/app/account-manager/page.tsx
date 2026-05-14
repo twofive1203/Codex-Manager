@@ -4,6 +4,9 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  BarChart3,
+  KeyRound,
+  LineChart,
   Pencil,
   Plus,
   RefreshCw,
@@ -39,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -53,10 +57,12 @@ import { APP_SESSION_QUERY_KEY } from "@/hooks/useAppSession";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
 import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import { appClient } from "@/lib/api/app-client";
+import { dashboardClient } from "@/lib/api/dashboard-client";
 import { getAppErrorMessage } from "@/lib/api/transport";
 import { useI18n } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
-import type { AccountManagerStatus, AppUser } from "@/types";
+import { formatCompactNumber } from "@/lib/utils/usage";
+import type { AccountManagerStatus, AppUser, MemberDashboardSummary } from "@/types";
 
 const ACCOUNT_MANAGER_QUERY_KEYS = {
   status: ["account-manager", "status"] as const,
@@ -76,6 +82,26 @@ function formatCreditMicros(value: number | null | undefined): string {
   }).format(normalized / CREDIT_MICROS_PER_USD);
 }
 
+function formatUsd(value: number | null | undefined): string {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(normalized);
+}
+
+function formatTokenAmount(value: number | null | undefined): string {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+  if (normalized < 1000) {
+    return normalized.toLocaleString("zh-CN");
+  }
+  return formatCompactNumber(normalized, "0.00", 2, true);
+}
+
 function parseCreditInput(value: string): number | null {
   const normalized = Number(String(value || "").trim());
   if (!Number.isFinite(normalized) || normalized < 0) {
@@ -93,6 +119,16 @@ function formatTime(value: number | null | undefined): string {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatShortDate(value: number | null | undefined): string {
+  if (!value) return "--";
+  const date = new Date(value * 1000);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleDateString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
   });
 }
 
@@ -160,6 +196,188 @@ function StatCard({
   );
 }
 
+function UserUsageTrendLine({ summary }: { summary: MemberDashboardSummary }) {
+  const points = summary.usageTrend7d;
+  const maxTokens = Math.max(1, ...points.map((item) => item.totalTokens));
+  const width = 320;
+  const height = 112;
+  const padding = 12;
+  const plotWidth = width - padding * 2;
+  const plotHeight = height - padding * 2;
+  const coords = points.map((item, index) => {
+    const x =
+      points.length <= 1 ? width / 2 : padding + (index / (points.length - 1)) * plotWidth;
+    const y = padding + plotHeight - (item.totalTokens / maxTokens) * plotHeight;
+    return { x, y, item };
+  });
+  const path = coords
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+
+  return (
+    <div className="rounded-xl bg-background/35 p-3">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-36 w-full text-primary"
+        role="img"
+        aria-label="user token usage line chart"
+      >
+        <path
+          d={path}
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="3"
+        />
+        {coords.map((point) => (
+          <circle
+            key={point.item.dayStartTs}
+            cx={point.x}
+            cy={point.y}
+            r="3.2"
+            className="fill-background stroke-primary"
+            strokeWidth="2"
+          >
+            <title>
+              {formatShortDate(point.item.dayStartTs)} · {formatTokenAmount(point.item.totalTokens)}
+            </title>
+          </circle>
+        ))}
+      </svg>
+      <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-muted-foreground">
+        {points.map((item) => (
+          <span key={item.dayStartTs}>{formatShortDate(item.dayStartTs)}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UserUsageDetail({
+  user,
+  summary,
+}: {
+  user: AppUser;
+  summary: MemberDashboardSummary;
+}) {
+  const { t } = useI18n();
+  const successRate =
+    summary.usageToday.successRate == null
+      ? "--"
+      : `${Math.round(summary.usageToday.successRate * 100)}%`;
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl bg-background/35 p-3">
+          <div className="text-xs text-muted-foreground">{t("可用额度")}</div>
+          <div className="mt-1 text-lg font-semibold">
+            {formatCreditMicros(summary.wallet?.availableCreditMicros ?? user.wallet?.availableCreditMicros)}
+          </div>
+        </div>
+        <div className="rounded-xl bg-background/35 p-3">
+          <div className="text-xs text-muted-foreground">{t("今日 Token")}</div>
+          <div className="mt-1 text-lg font-semibold">
+            {formatTokenAmount(summary.usageToday.totalTokens)}
+          </div>
+        </div>
+        <div className="rounded-xl bg-background/35 p-3">
+          <div className="text-xs text-muted-foreground">{t("成功率 / 费用")}</div>
+          <div className="mt-1 text-lg font-semibold">
+            {successRate} · {formatUsd(summary.usageToday.estimatedCostUsd)}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+          <LineChart className="h-4 w-4 text-primary" />
+          {t("Token 消耗曲线")}
+        </div>
+        <UserUsageTrendLine summary={summary} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl bg-background/25 p-3">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+            <KeyRound className="h-4 w-4 text-primary" />
+            {t("Key 消耗明细")}
+          </div>
+          <div className="space-y-2">
+            {summary.topKeys.length === 0 ? (
+              <div className="text-xs text-muted-foreground">{t("暂无 Key 用量")}</div>
+            ) : (
+              summary.topKeys.map((item) => (
+                <div
+                  key={item.keyId}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{item.name || item.keyId}</div>
+                    <div className="truncate text-muted-foreground">{item.modelSlug || "auto"}</div>
+                  </div>
+                  <div className="text-right font-semibold">
+                    {formatTokenAmount(item.todayTokens || item.totalTokens)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        <div className="rounded-xl bg-background/25 p-3">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+            <BarChart3 className="h-4 w-4 text-primary" />
+            {t("模型消耗明细")}
+          </div>
+          <div className="space-y-2">
+            {summary.topModels.length === 0 ? (
+              <div className="text-xs text-muted-foreground">{t("暂无模型用量")}</div>
+            ) : (
+              summary.topModels.map((item) => (
+                <div
+                  key={item.model}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs"
+                >
+                  <div className="truncate font-mono font-medium">{item.model}</div>
+                  <div className="text-right font-semibold">
+                    {formatTokenAmount(item.totalTokens)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl bg-background/25 p-3">
+        <div className="mb-2 text-sm font-semibold">{t("近期请求上下文")}</div>
+        {summary.recentLogs.length === 0 ? (
+          <div className="text-xs text-muted-foreground">{t("暂无请求日志")}</div>
+        ) : (
+          <div className="divide-y divide-border/40">
+            {summary.recentLogs.slice(0, 5).map((log) => (
+              <div
+                key={log.id}
+                className="grid gap-2 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-mono font-medium">{log.model || "unknown"}</div>
+                  <div className="truncate text-muted-foreground">{formatTime(log.createdAt)}</div>
+                </div>
+                <div className="flex gap-3 text-muted-foreground sm:justify-end">
+                  <span>{log.statusCode || "-"}</span>
+                  <span>{formatTokenAmount(log.totalTokens)}</span>
+                  <span>{formatUsd(log.estimatedCostUsd)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AccountManagerPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -170,6 +388,7 @@ export default function AccountManagerPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [topUpUserId, setTopUpUserId] = useState<string | null>(null);
   const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [usageUserId, setUsageUserId] = useState<string | null>(null);
   const [createDraft, setCreateDraft] = useState({
     username: "",
     displayName: "",
@@ -198,6 +417,12 @@ export default function AccountManagerPage() {
     queryFn: () => appClient.listAppUsers(),
     enabled: shouldQuery,
   });
+  const usageDetailQuery = useQuery<MemberDashboardSummary>({
+    queryKey: ["account-manager", "user-usage", usageUserId],
+    queryFn: () => dashboardClient.getMemberSummary({ userId: usageUserId }),
+    enabled: shouldQuery && Boolean(usageUserId),
+    retry: 1,
+  });
 
   usePageTransitionReady(
     "/account-manager/",
@@ -219,6 +444,7 @@ export default function AccountManagerPage() {
   const status = statusQuery.data;
   const topUpUser = topUpUserId ? usersById.get(topUpUserId) ?? null : null;
   const editUser = editUserId ? usersById.get(editUserId) ?? null : null;
+  const usageUser = usageUserId ? usersById.get(usageUserId) ?? null : null;
 
   const refreshAll = async () => {
     await Promise.all([
@@ -227,6 +453,9 @@ export default function AccountManagerPage() {
       }),
       queryClient.invalidateQueries({
         queryKey: ACCOUNT_MANAGER_QUERY_KEYS.users,
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["account-manager", "user-usage"],
       }),
       queryClient.invalidateQueries({
         queryKey: ["account-manager", "api-key-owners"],
@@ -504,7 +733,7 @@ export default function AccountManagerPage() {
                       {user.id}
                     </TableCell>
                     <TableCell className="pr-4 text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex flex-wrap justify-end gap-2">
                         <Button
                           variant="outline"
                           size="sm"
@@ -512,6 +741,16 @@ export default function AccountManagerPage() {
                           onClick={() => openTopUpDialog(user)}
                         >
                           {t("充值")}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1"
+                          disabled={!canAccessManagementRpc}
+                          onClick={() => setUsageUserId(user.id)}
+                        >
+                          <LineChart className="h-3.5 w-3.5" />
+                          {t("用量")}
                         </Button>
                         <Button
                           variant="ghost"
@@ -768,6 +1007,54 @@ export default function AccountManagerPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(usageUserId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUsageUserId(null);
+          }
+        }}
+      >
+        <DialogContent className="glass-card max-h-[85vh] overflow-y-auto border-none sm:max-w-[760px]">
+          <DialogHeader>
+            <DialogTitle>{t("成员用量详情")}</DialogTitle>
+            <DialogDescription>
+              {usageUser ? userSelectLabel(usageUser) : t("选择登录账号")}
+            </DialogDescription>
+          </DialogHeader>
+          {!usageUser ? (
+            <div className="rounded-xl bg-background/35 p-4 text-sm text-muted-foreground">
+              {t("未找到登录账号")}
+            </div>
+          ) : usageDetailQuery.isLoading ? (
+            <div className="grid gap-3">
+              <Skeleton className="h-20 w-full rounded-xl" />
+              <Skeleton className="h-44 w-full rounded-xl" />
+              <Skeleton className="h-28 w-full rounded-xl" />
+            </div>
+          ) : usageDetailQuery.isError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+              {t("用量详情读取失败")}
+            </div>
+          ) : usageDetailQuery.data ? (
+            <UserUsageDetail user={usageUser} summary={usageDetailQuery.data} />
+          ) : (
+            <div className="rounded-xl bg-background/35 p-4 text-sm text-muted-foreground">
+              {t("暂无用量详情")}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setUsageUserId(null)}
+            >
+              {t("关闭")}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -38,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
+import { useDashboardAdminUsageSummary } from "@/hooks/useDashboardAdminUsageSummary";
 import { useAppSession } from "@/hooks/useAppSession";
 import { useMemberDashboardSummary } from "@/hooks/useMemberDashboardSummary";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
@@ -48,6 +49,11 @@ import { buildStaticRouteUrl } from "@/lib/utils/static-routes";
 import { formatLocalDateTimeFromSeconds } from "@/lib/utils/time";
 import { formatCompactNumber } from "@/lib/utils/usage";
 import type {
+  DashboardAdminUsageSummary,
+  DashboardDailyUsagePoint,
+  DashboardSourceUsageSummary,
+  DashboardTokenUsage,
+  DashboardUserUsageSummary,
   MemberDashboardAlert,
   MemberDashboardKeyUsage,
   MemberDashboardSummary,
@@ -315,10 +321,266 @@ function DashboardInitialSkeleton() {
   );
 }
 
+function userUsageName(item: DashboardUserUsageSummary): string {
+  return item.displayName || item.username || item.userId;
+}
+
+function sourceUsageName(item: DashboardSourceUsageSummary): string {
+  return item.name || item.sourceId;
+}
+
+function DailyTokenLineChart({
+  points,
+  className,
+}: {
+  points: DashboardDailyUsagePoint[];
+  className?: string;
+}) {
+  const chartPoints = points.length > 0 ? points : [];
+  const maxTokens = Math.max(1, ...chartPoints.map((item) => item.usage.totalTokens));
+  const width = 360;
+  const height = 132;
+  const paddingX = 12;
+  const paddingY = 14;
+  const plotWidth = width - paddingX * 2;
+  const plotHeight = height - paddingY * 2;
+  const coords = chartPoints.map((item, index) => {
+    const x =
+      chartPoints.length <= 1
+        ? width / 2
+        : paddingX + (index / (chartPoints.length - 1)) * plotWidth;
+    const y =
+      paddingY + plotHeight - (item.usage.totalTokens / maxTokens) * plotHeight;
+    return { x, y, item };
+  });
+  const linePath = coords
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const areaPath =
+    coords.length > 0
+      ? `${linePath} L ${coords[coords.length - 1].x} ${height - paddingY} L ${coords[0].x} ${height - paddingY} Z`
+      : "";
+
+  return (
+    <div className={cn("rounded-xl bg-background/30 p-3", className)}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-44 w-full overflow-visible"
+        role="img"
+        aria-label="daily token usage line chart"
+      >
+        <defs>
+          <linearGradient id="daily-token-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        <g className="text-primary">
+          {areaPath ? <path d={areaPath} fill="url(#daily-token-area)" /> : null}
+          {linePath ? (
+            <path
+              d={linePath}
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="3"
+            />
+          ) : null}
+          {coords.map((point) => (
+            <circle
+              key={point.item.dayStartTs}
+              cx={point.x}
+              cy={point.y}
+              r="3.6"
+              className="fill-background stroke-primary"
+              strokeWidth="2"
+            >
+              <title>
+                {formatShortDate(point.item.dayStartTs)} ·{" "}
+                {formatCompactTokenAmount(point.item.usage.totalTokens)}
+              </title>
+            </circle>
+          ))}
+        </g>
+      </svg>
+      <div className="mt-1 grid grid-cols-7 gap-1 text-center text-[10px] text-muted-foreground">
+        {chartPoints.slice(-7).map((item) => (
+          <span key={item.dayStartTs}>{formatShortDate(item.dayStartTs)}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UsageRankList<T extends { todayUsage: DashboardTokenUsage; rangeUsage: DashboardTokenUsage }>({
+  title,
+  items,
+  labelForItem,
+  emptyText,
+}: {
+  title: string;
+  items: T[];
+  labelForItem: (item: T) => string;
+  emptyText: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="mb-2 text-xs font-semibold text-muted-foreground">{title}</div>
+      {items.length === 0 ? (
+        <div className="rounded-lg bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+          {emptyText}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.slice(0, 5).map((item, index) => (
+            <div
+              key={`${labelForItem(item)}-${index}`}
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg bg-background/30 px-3 py-2 text-xs"
+            >
+              <div className="min-w-0">
+                <div className="truncate font-medium">{labelForItem(item)}</div>
+                <div className="truncate text-muted-foreground">
+                  {item.todayUsage.requestCount} req · {formatUsd(item.todayUsage.estimatedCostUsd)}
+                </div>
+              </div>
+              <div className="shrink-0 text-right font-semibold">
+                {formatCompactTokenAmount(item.todayUsage.totalTokens)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminUsageAnalyticsCard({
+  summary,
+  isLoading,
+  isError,
+}: {
+  summary: DashboardAdminUsageSummary | undefined;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  const { t } = useI18n();
+  if (isLoading) {
+    return <Skeleton className="h-[420px] w-full rounded-2xl" />;
+  }
+  if (isError) {
+    return (
+      <Card className="glass-card border-none shadow-md">
+        <CardContent className="py-6 text-sm text-destructive">
+          {t("管理员用量分析读取失败")}
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!summary) {
+    return (
+      <Card className="glass-card border-none shadow-md">
+        <CardContent className="py-6 text-sm text-muted-foreground">
+          {t("管理员用量分析暂不可用")}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const memberItems = summary.users.filter(
+    (item) =>
+      item.role !== "admin" ||
+      item.todayUsage.totalTokens > 0 ||
+      item.rangeUsage.totalTokens > 0,
+  );
+  const activeOpenAiAccounts = summary.openaiAccounts.filter(
+    (item) => item.todayUsage.totalTokens > 0 || item.rangeUsage.totalTokens > 0,
+  );
+  const activeAggregateApis = summary.aggregateApis.filter(
+    (item) => item.todayUsage.totalTokens > 0 || item.rangeUsage.totalTokens > 0,
+  );
+
+  return (
+    <Card className="glass-card overflow-hidden border-none shadow-md">
+      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+        <div>
+          <CardTitle className="flex items-center gap-2 text-base font-semibold">
+            <LineChart className="h-4 w-4 text-primary" />
+            {t("管理员用量分析")}
+          </CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("按天、成员、OpenAI 账号和聚合 API 汇总 token 消耗")}
+          </p>
+        </div>
+        <div className="rounded-lg bg-primary/10 px-3 py-2 text-right text-xs">
+          <div className="font-semibold text-primary">
+            {formatCompactTokenAmount(summary.todayUsage.totalTokens)}
+          </div>
+          <div className="text-muted-foreground">{formatUsd(summary.todayUsage.estimatedCostUsd)}</div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
+        <div className="space-y-3">
+          <DailyTokenLineChart points={summary.dailyUsage} />
+          <div className="grid gap-3 text-xs sm:grid-cols-3">
+            <div className="rounded-lg bg-background/30 px-3 py-2">
+              <div className="text-muted-foreground">{t("今日请求")}</div>
+              <div className="mt-1 font-semibold">
+                {summary.todayUsage.requestCount} · {t("成功")}{" "}
+                {summary.todayUsage.successCount}
+              </div>
+            </div>
+            <div className="rounded-lg bg-background/30 px-3 py-2">
+              <div className="text-muted-foreground">{t("输入 / 输出")}</div>
+              <div className="mt-1 font-semibold">
+                {formatCompactTokenAmount(summary.todayUsage.inputTokens)} /{" "}
+                {formatCompactTokenAmount(summary.todayUsage.outputTokens)}
+              </div>
+            </div>
+            <div className="rounded-lg bg-background/30 px-3 py-2">
+              <div className="text-muted-foreground">{t("缓存 / 推理")}</div>
+              <div className="mt-1 font-semibold">
+                {formatCompactTokenAmount(summary.todayUsage.cachedInputTokens)} /{" "}
+                {formatCompactTokenAmount(summary.todayUsage.reasoningOutputTokens)}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="grid gap-4">
+          <UsageRankList
+            title={t("成员今日消耗")}
+            items={memberItems}
+            labelForItem={userUsageName}
+            emptyText={t("暂无成员消耗")}
+          />
+          <UsageRankList
+            title={t("OpenAI 账号今日消耗")}
+            items={activeOpenAiAccounts}
+            labelForItem={sourceUsageName}
+            emptyText={t("暂无 OpenAI 账号消耗")}
+          />
+          <UsageRankList
+            title={t("聚合 API 今日消耗")}
+            items={activeAggregateApis}
+            labelForItem={sourceUsageName}
+            emptyText={t("暂无聚合 API 消耗")}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AdminDashboard() {
   const { t } = useI18n();
   const { stats, currentAccount, recommendations, requestLogs, isLoading, isServiceReady } =
     useDashboardStats();
+  const {
+    data: adminUsageSummary,
+    isLoading: isAdminUsageLoading,
+    isError: isAdminUsageError,
+  } =
+    useDashboardAdminUsageSummary(true);
   const { data: quotaModelPools, isLoading: isQuotaModelPoolsLoading } = useQuery({
     queryKey: ["quota", "model-pools"],
     queryFn: () => quotaClient.modelPools(),
@@ -401,6 +663,12 @@ function AdminDashboard() {
           </>
         )}
       </div>
+
+      <AdminUsageAnalyticsCard
+        summary={adminUsageSummary}
+        isLoading={isLoading || isAdminUsageLoading}
+        isError={isAdminUsageError}
+      />
 
       <Card className="glass-card overflow-hidden border-none shadow-md backdrop-blur-md">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

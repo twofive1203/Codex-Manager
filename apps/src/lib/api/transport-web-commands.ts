@@ -305,6 +305,16 @@ export function createWebCommandMap(
     service_model_group_delete: { rpcMethod: "modelGroups/delete" },
     service_model_group_models_set: { rpcMethod: "modelGroups/setModels" },
     service_model_group_users_set: { rpcMethod: "modelGroups/setUsers" },
+    service_dashboard_admin_usage_summary: {
+      rpcMethod: "dashboard/adminUsageSummary",
+      mapParams: (params) => {
+        const source = asRecord(params) ?? {};
+        return {
+          startTs: source.start_ts ?? source.startTs,
+          endTs: source.end_ts ?? source.endTs,
+        };
+      },
+    },
     service_dashboard_member_summary: {
       rpcMethod: "dashboard/memberSummary",
       mapParams: (params) => {

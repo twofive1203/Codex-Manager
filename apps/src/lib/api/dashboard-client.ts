@@ -1,6 +1,11 @@
 import { invoke, withAddr } from "./transport";
 import { normalizeModelCatalog, normalizeRequestLogs } from "./normalize";
 import type {
+  DashboardAdminUsageSummary,
+  DashboardDailyUsagePoint,
+  DashboardSourceUsageSummary,
+  DashboardTokenUsage,
+  DashboardUserUsageSummary,
   MemberDashboardAlert,
   MemberDashboardApiKeySummary,
   MemberDashboardKeyUsage,
@@ -39,6 +44,93 @@ function nullableNumber(value: unknown): number | null {
 
 function nullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readTokenUsage(value: unknown): DashboardTokenUsage {
+  const source = asRecord(value);
+  return {
+    inputTokens: asNumber(source.inputTokens ?? source.input_tokens),
+    cachedInputTokens: asNumber(
+      source.cachedInputTokens ?? source.cached_input_tokens,
+    ),
+    outputTokens: asNumber(source.outputTokens ?? source.output_tokens),
+    reasoningOutputTokens: asNumber(
+      source.reasoningOutputTokens ?? source.reasoning_output_tokens,
+    ),
+    totalTokens: asNumber(source.totalTokens ?? source.total_tokens),
+    estimatedCostUsd: asNumber(
+      source.estimatedCostUsd ?? source.estimated_cost_usd,
+    ),
+    requestCount: asNumber(source.requestCount ?? source.request_count),
+    successCount: asNumber(source.successCount ?? source.success_count),
+    errorCount: asNumber(source.errorCount ?? source.error_count),
+  };
+}
+
+function readDailyUsagePoint(value: unknown): DashboardDailyUsagePoint {
+  const source = asRecord(value);
+  return {
+    dayStartTs: asNumber(source.dayStartTs ?? source.day_start_ts),
+    dayEndTs: asNumber(source.dayEndTs ?? source.day_end_ts),
+    usage: readTokenUsage(source.usage),
+  };
+}
+
+function readUserUsageSummary(value: unknown): DashboardUserUsageSummary | null {
+  const source = asRecord(value);
+  const userId = asString(source.userId ?? source.user_id);
+  if (!userId) return null;
+  return {
+    userId,
+    username: nullableString(source.username),
+    displayName: nullableString(source.displayName ?? source.display_name),
+    role: nullableString(source.role),
+    status: nullableString(source.status),
+    walletAvailableCreditMicros: nullableNumber(
+      source.walletAvailableCreditMicros ??
+        source.wallet_available_credit_micros,
+    ),
+    todayUsage: readTokenUsage(source.todayUsage ?? source.today_usage),
+    rangeUsage: readTokenUsage(source.rangeUsage ?? source.range_usage),
+  };
+}
+
+function readSourceUsageSummary(value: unknown): DashboardSourceUsageSummary | null {
+  const source = asRecord(value);
+  const sourceId = asString(source.sourceId ?? source.source_id);
+  if (!sourceId) return null;
+  return {
+    sourceKind: asString(source.sourceKind ?? source.source_kind),
+    sourceId,
+    name: nullableString(source.name),
+    status: nullableString(source.status),
+    provider: nullableString(source.provider),
+    todayUsage: readTokenUsage(source.todayUsage ?? source.today_usage),
+    rangeUsage: readTokenUsage(source.rangeUsage ?? source.range_usage),
+  };
+}
+
+function readAdminUsageSummary(value: unknown): DashboardAdminUsageSummary {
+  const source = asRecord(value);
+  return {
+    rangeStartTs: asNumber(source.rangeStartTs ?? source.range_start_ts),
+    rangeEndTs: asNumber(source.rangeEndTs ?? source.range_end_ts),
+    todayStartTs: asNumber(source.todayStartTs ?? source.today_start_ts),
+    todayEndTs: asNumber(source.todayEndTs ?? source.today_end_ts),
+    todayUsage: readTokenUsage(source.todayUsage ?? source.today_usage),
+    dailyUsage: asArray(source.dailyUsage ?? source.daily_usage).map(
+      readDailyUsagePoint,
+    ),
+    users: asArray(source.users)
+      .map(readUserUsageSummary)
+      .filter((item): item is DashboardUserUsageSummary => Boolean(item)),
+    openaiAccounts: asArray(source.openaiAccounts ?? source.openai_accounts)
+      .map(readSourceUsageSummary)
+      .filter((item): item is DashboardSourceUsageSummary => Boolean(item)),
+    aggregateApis: asArray(source.aggregateApis ?? source.aggregate_apis)
+      .map(readSourceUsageSummary)
+      .filter((item): item is DashboardSourceUsageSummary => Boolean(item)),
+  };
 }
 
 function readWallet(value: unknown): MemberDashboardWallet | null {
@@ -181,6 +273,19 @@ function readMemberDashboardSummary(value: unknown): MemberDashboardSummary {
 }
 
 export const dashboardClient = {
+  async getAdminUsageSummary(params?: {
+    startTs?: number | null;
+    endTs?: number | null;
+  }): Promise<DashboardAdminUsageSummary> {
+    const result = await invoke<unknown>(
+      "service_dashboard_admin_usage_summary",
+      withAddr({
+        startTs: params?.startTs ?? null,
+        endTs: params?.endTs ?? null,
+      }),
+    );
+    return readAdminUsageSummary(result);
+  },
   async getMemberSummary(params?: {
     userId?: string | null;
     dayStartTs?: number;

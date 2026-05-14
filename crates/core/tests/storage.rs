@@ -1,6 +1,7 @@
 use codexmanager_core::storage::{
-    now_ts, Account, ApiKey, Event, ModelSourceMapping, ModelSourceModel, RequestLog,
-    RequestTokenStat, Storage, Token, UsageSnapshotRecord,
+    now_ts, Account, AggregateApi, ApiKey, ApiKeyOwner, AppUser, AppWalletLedgerEntry, Event,
+    ModelSourceMapping, ModelSourceModel, RequestLog, RequestTokenStat, Storage, Token,
+    UsageSnapshotRecord,
 };
 
 /// 函数 `storage_can_insert_account_and_token`
@@ -1280,6 +1281,321 @@ fn insert_request_log_with_token_stat_writes_both_tables_in_one_call() {
     assert_eq!(logs[0].output_tokens, Some(5));
     assert_eq!(logs[0].total_tokens, Some(15));
     assert_eq!(logs[0].reasoning_output_tokens, Some(1));
+}
+
+#[test]
+fn request_token_stats_rollups_use_owner_and_actual_source_precedence() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init schema");
+    let base = 1_700_000_000;
+
+    for (id, username) in [("ledger-user", "ledger"), ("current-user", "current")] {
+        storage
+            .insert_app_user(&AppUser {
+                id: id.to_string(),
+                username: username.to_string(),
+                display_name: None,
+                password_hash: "hash".to_string(),
+                role: "member".to_string(),
+                status: "active".to_string(),
+                created_at: base,
+                updated_at: base,
+                last_login_at: None,
+            })
+            .expect("insert app user");
+    }
+
+    let ledger_wallet = storage
+        .ensure_wallet_for_owner("wallet-ledger-user", "user", "ledger-user")
+        .expect("ensure ledger wallet");
+
+    for key_id in ["key-shared", "key-unowned"] {
+        storage
+            .insert_api_key(&ApiKey {
+                id: key_id.to_string(),
+                name: Some(key_id.to_string()),
+                model_slug: Some("gpt-5-mini".to_string()),
+                reasoning_effort: None,
+                service_tier: None,
+                rotation_strategy: "account_rotation".to_string(),
+                aggregate_api_id: None,
+                account_plan_filter: None,
+                aggregate_api_url: None,
+                client_type: "codex".to_string(),
+                protocol_type: "openai_compat".to_string(),
+                auth_scheme: "authorization_bearer".to_string(),
+                upstream_base_url: None,
+                static_headers_json: None,
+                key_hash: format!("hash-{key_id}"),
+                status: "active".to_string(),
+                created_at: base,
+                last_used_at: None,
+            })
+            .expect("insert api key");
+    }
+
+    storage
+        .upsert_api_key_owner(&ApiKeyOwner {
+            key_id: "key-shared".to_string(),
+            owner_kind: "user".to_string(),
+            owner_user_id: Some("current-user".to_string()),
+            project_id: None,
+            updated_at: base,
+        })
+        .expect("upsert key owner");
+
+    for account_id in ["acc-actual", "acc-legacy"] {
+        storage
+            .insert_account(&Account {
+                id: account_id.to_string(),
+                label: account_id.to_string(),
+                issuer: "https://auth.openai.com".to_string(),
+                chatgpt_account_id: None,
+                workspace_id: None,
+                group_name: None,
+                sort: 0,
+                status: "active".to_string(),
+                created_at: base,
+                updated_at: base,
+            })
+            .expect("insert account");
+    }
+
+    for aggregate_id in ["agg-actual", "agg-legacy"] {
+        storage
+            .insert_aggregate_api(&AggregateApi {
+                id: aggregate_id.to_string(),
+                provider_type: "openai-compatible".to_string(),
+                supplier_name: Some(aggregate_id.to_string()),
+                sort: 0,
+                url: format!("https://{aggregate_id}.example/v1"),
+                auth_type: "bearer".to_string(),
+                auth_params_json: None,
+                action: None,
+                model_override: None,
+                status: "active".to_string(),
+                created_at: base,
+                updated_at: base,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+                balance_query_enabled: false,
+                balance_query_template: None,
+                balance_query_base_url: None,
+                balance_query_user_id: None,
+                balance_query_config_json: None,
+                last_balance_at: None,
+                last_balance_status: None,
+                last_balance_error: None,
+                last_balance_json: None,
+            })
+            .expect("insert aggregate api");
+    }
+
+    let insert_usage_log = |trace_id: &str,
+                            key_id: &str,
+                            created_at: i64,
+                            status_code: i64,
+                            account_id: Option<&str>,
+                            initial_aggregate_api_id: Option<&str>,
+                            actual_source_kind: Option<&str>,
+                            actual_source_id: Option<&str>,
+                            input_tokens: i64,
+                            cached_input_tokens: i64,
+                            output_tokens: i64,
+                            total_tokens: Option<i64>,
+                            estimated_cost_usd: f64| {
+        let (request_log_id, token_stat_error) = storage
+            .insert_request_log_with_token_stat(
+                &RequestLog {
+                    trace_id: Some(trace_id.to_string()),
+                    key_id: Some(key_id.to_string()),
+                    account_id: account_id.map(str::to_string),
+                    initial_aggregate_api_id: initial_aggregate_api_id.map(str::to_string),
+                    request_path: "/v1/chat/completions".to_string(),
+                    method: "POST".to_string(),
+                    model: Some("gpt-5-mini".to_string()),
+                    actual_source_kind: actual_source_kind.map(str::to_string),
+                    actual_source_id: actual_source_id.map(str::to_string),
+                    status_code: Some(status_code),
+                    created_at,
+                    ..RequestLog::default()
+                },
+                &RequestTokenStat {
+                    key_id: Some(key_id.to_string()),
+                    account_id: account_id.map(str::to_string),
+                    model: Some("gpt-5-mini".to_string()),
+                    input_tokens: Some(input_tokens),
+                    cached_input_tokens: Some(cached_input_tokens),
+                    output_tokens: Some(output_tokens),
+                    total_tokens,
+                    estimated_cost_usd: Some(estimated_cost_usd),
+                    created_at,
+                    ..RequestTokenStat::default()
+                },
+            )
+            .expect("insert usage log");
+        assert!(
+            token_stat_error.is_none(),
+            "token stat insert failed: {:?}",
+            token_stat_error
+        );
+        request_log_id
+    };
+
+    let ledger_log_id = insert_usage_log(
+        "trace-ledger-owner",
+        "key-shared",
+        base + 60,
+        200,
+        Some("acc-legacy"),
+        None,
+        Some("openai_account"),
+        Some("acc-actual"),
+        100,
+        20,
+        50,
+        Some(100),
+        0.10,
+    );
+    storage
+        .adjust_wallet_balance(&AppWalletLedgerEntry {
+            id: "ledger-charge-one".to_string(),
+            wallet_id: ledger_wallet.id.clone(),
+            entry_kind: "request_charge".to_string(),
+            amount_credit_micros: -10_000,
+            balance_after_credit_micros: 0,
+            request_log_id: Some(ledger_log_id),
+            api_key_id: None,
+            pricing_rule_id: None,
+            raw_usage_json: None,
+            note: None,
+            created_by_user_id: None,
+            created_at: base + 61,
+        })
+        .expect("insert request charge ledger");
+
+    insert_usage_log(
+        "trace-current-owner",
+        "key-shared",
+        base + 120,
+        500,
+        Some("acc-legacy"),
+        None,
+        None,
+        None,
+        80,
+        30,
+        20,
+        None,
+        0.20,
+    );
+    insert_usage_log(
+        "trace-aggregate-actual",
+        "key-unowned",
+        base + 86_400 + 30,
+        200,
+        Some("acc-legacy"),
+        Some("agg-legacy"),
+        Some("aggregate_api"),
+        Some("agg-actual"),
+        40,
+        0,
+        10,
+        Some(30),
+        0.30,
+    );
+    insert_usage_log(
+        "trace-aggregate-legacy",
+        "key-unowned",
+        base + 86_400 + 60,
+        200,
+        None,
+        Some("agg-legacy"),
+        None,
+        None,
+        25,
+        5,
+        20,
+        None,
+        0.40,
+    );
+
+    let daily = storage
+        .summarize_request_token_stats_daily(base, base + 2 * 86_400, 86_400)
+        .expect("daily rollup");
+    assert_eq!(daily.len(), 2);
+    assert_eq!(daily[0].usage.total_tokens, 170);
+    assert_eq!(daily[0].usage.input_tokens, 180);
+    assert_eq!(daily[0].usage.cached_input_tokens, 50);
+    assert_eq!(daily[0].usage.output_tokens, 70);
+    assert_eq!(daily[0].usage.request_count, 2);
+    assert_eq!(daily[0].usage.success_count, 1);
+    assert_eq!(daily[0].usage.error_count, 1);
+    assert_eq!(daily[1].usage.total_tokens, 70);
+
+    let by_user = storage
+        .summarize_request_token_stats_by_user_between(base, base + 86_400)
+        .expect("user rollup");
+    let ledger_user = by_user
+        .iter()
+        .find(|item| item.user_id == "ledger-user")
+        .expect("ledger owner rollup");
+    let current_user = by_user
+        .iter()
+        .find(|item| item.user_id == "current-user")
+        .expect("current owner fallback rollup");
+    assert_eq!(ledger_user.usage.total_tokens, 100);
+    assert_eq!(current_user.usage.total_tokens, 70);
+
+    let ledger_direct = storage
+        .summarize_request_token_stats_for_user_between("ledger-user", base, base + 86_400)
+        .expect("direct user rollup");
+    assert_eq!(ledger_direct.total_tokens, 100);
+
+    let openai_sources = storage
+        .summarize_request_token_stats_by_source_between("openai_account", base, base + 2 * 86_400)
+        .expect("openai source rollup");
+    assert_eq!(
+        openai_sources
+            .iter()
+            .find(|item| item.source_id == "acc-actual")
+            .expect("actual account")
+            .usage
+            .total_tokens,
+        100
+    );
+    assert_eq!(
+        openai_sources
+            .iter()
+            .find(|item| item.source_id == "acc-legacy")
+            .expect("legacy account")
+            .usage
+            .total_tokens,
+        70
+    );
+
+    let aggregate_sources = storage
+        .summarize_request_token_stats_by_source_between("aggregate_api", base, base + 2 * 86_400)
+        .expect("aggregate source rollup");
+    assert_eq!(
+        aggregate_sources
+            .iter()
+            .find(|item| item.source_id == "agg-actual")
+            .expect("actual aggregate")
+            .usage
+            .total_tokens,
+        30
+    );
+    assert_eq!(
+        aggregate_sources
+            .iter()
+            .find(|item| item.source_id == "agg-legacy")
+            .expect("legacy aggregate")
+            .usage
+            .total_tokens,
+        40
+    );
 }
 
 /// 函数 `clear_request_logs_keeps_token_stats_for_usage_summary`

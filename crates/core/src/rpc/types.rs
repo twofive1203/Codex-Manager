@@ -1153,7 +1153,7 @@ fn default_input_modalities() -> Vec<String> {
     vec!["text".to_string(), "image".to_string()]
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub slug: String,
     pub display_name: String,
@@ -1217,6 +1217,45 @@ pub struct ModelInfo {
     pub available_in_plans: Vec<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+impl Default for ModelInfo {
+    fn default() -> Self {
+        Self {
+            slug: String::new(),
+            display_name: String::new(),
+            description: None,
+            default_reasoning_level: None,
+            supported_reasoning_levels: Vec::new(),
+            shell_type: None,
+            visibility: None,
+            supported_in_api: default_supported_in_api(),
+            priority: 0,
+            additional_speed_tiers: Vec::new(),
+            availability_nux: None,
+            upgrade: None,
+            base_instructions: None,
+            model_messages: None,
+            supports_reasoning_summaries: None,
+            default_reasoning_summary: None,
+            support_verbosity: None,
+            default_verbosity: None,
+            apply_patch_tool_type: None,
+            web_search_tool_type: None,
+            truncation_policy: None,
+            supports_parallel_tool_calls: None,
+            supports_image_detail_original: None,
+            context_window: None,
+            auto_compact_token_limit: None,
+            effective_context_window_percent: None,
+            experimental_supported_tools: Vec::new(),
+            input_modalities: default_input_modalities(),
+            minimal_client_version: None,
+            supports_search_tool: None,
+            available_in_plans: Vec::new(),
+            extra: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1449,6 +1488,71 @@ pub struct StartupSnapshotResult {
     pub manual_preferred_account_id: Option<String>,
     pub request_log_today_summary: RequestLogTodaySummaryResult,
     pub request_logs: Vec<RequestLogSummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardTokenUsageResult {
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_output_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+    pub request_count: i64,
+    pub success_count: i64,
+    pub error_count: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardDailyUsagePoint {
+    pub day_start_ts: i64,
+    pub day_end_ts: i64,
+    pub usage: DashboardTokenUsageResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardUserUsageSummary {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub status: Option<String>,
+    pub wallet_available_credit_micros: Option<i64>,
+    pub today_usage: DashboardTokenUsageResult,
+    pub range_usage: DashboardTokenUsageResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSourceUsageSummary {
+    pub source_kind: String,
+    pub source_id: String,
+    pub name: Option<String>,
+    pub status: Option<String>,
+    pub provider: Option<String>,
+    pub today_usage: DashboardTokenUsageResult,
+    pub range_usage: DashboardTokenUsageResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardAdminUsageSummaryResult {
+    pub range_start_ts: i64,
+    pub range_end_ts: i64,
+    pub today_start_ts: i64,
+    pub today_end_ts: i64,
+    pub today_usage: DashboardTokenUsageResult,
+    #[serde(default)]
+    pub daily_usage: Vec<DashboardDailyUsagePoint>,
+    #[serde(default)]
+    pub users: Vec<DashboardUserUsageSummary>,
+    #[serde(default)]
+    pub openai_accounts: Vec<DashboardSourceUsageSummary>,
+    #[serde(default)]
+    pub aggregate_apis: Vec<DashboardSourceUsageSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

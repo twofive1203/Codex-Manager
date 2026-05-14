@@ -1,6 +1,57 @@
 import type { ModelInfo } from "@/types/model";
 import type { RequestLog } from "@/types/request-log";
 
+export interface DashboardTokenUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  requestCount: number;
+  successCount: number;
+  errorCount: number;
+}
+
+export interface DashboardDailyUsagePoint {
+  dayStartTs: number;
+  dayEndTs: number;
+  usage: DashboardTokenUsage;
+}
+
+export interface DashboardUserUsageSummary {
+  userId: string;
+  username: string | null;
+  displayName: string | null;
+  role: string | null;
+  status: string | null;
+  walletAvailableCreditMicros: number | null;
+  todayUsage: DashboardTokenUsage;
+  rangeUsage: DashboardTokenUsage;
+}
+
+export interface DashboardSourceUsageSummary {
+  sourceKind: string;
+  sourceId: string;
+  name: string | null;
+  status: string | null;
+  provider: string | null;
+  todayUsage: DashboardTokenUsage;
+  rangeUsage: DashboardTokenUsage;
+}
+
+export interface DashboardAdminUsageSummary {
+  rangeStartTs: number;
+  rangeEndTs: number;
+  todayStartTs: number;
+  todayEndTs: number;
+  todayUsage: DashboardTokenUsage;
+  dailyUsage: DashboardDailyUsagePoint[];
+  users: DashboardUserUsageSummary[];
+  openaiAccounts: DashboardSourceUsageSummary[];
+  aggregateApis: DashboardSourceUsageSummary[];
+}
+
 export interface MemberDashboardWallet {
   id: string;
   balanceCreditMicros: number;

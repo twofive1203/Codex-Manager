@@ -95,6 +95,22 @@ test("createWebCommandMap 为普通用户仪表盘汇总提供 Web RPC 映射", 
   );
 });
 
+test("createWebCommandMap 为管理员用量分析提供 Web RPC 映射", () => {
+  const summary = commandMap.service_dashboard_admin_usage_summary;
+  assert.equal(summary.rpcMethod, "dashboard/adminUsageSummary");
+  assert.ok(summary.mapParams);
+  assert.deepEqual(
+    summary.mapParams({
+      start_ts: 100,
+      end_ts: 200,
+    }),
+    {
+      startTs: 100,
+      endTs: 200,
+    },
+  );
+});
+
 test("createWebCommandMap 为模型来源映射命令提供 Web RPC 映射", () => {
   assert.deepEqual(commandMap.service_model_routing, {
     rpcMethod: "apikey/modelRouting",
