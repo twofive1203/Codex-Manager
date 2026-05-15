@@ -5,7 +5,8 @@ import { getTopLevelRouteLabel } from "@/lib/app-shell/top-level-routes";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/provider";
-import { useAppSession } from "@/hooks/useAppSession";
+import { resolveSessionRole, useAppSession } from "@/hooks/useAppSession";
+import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 
 const ROOT_ROUTE_PATH = "/";
 
@@ -15,8 +16,9 @@ export function ShellTabs() {
   const openShellTabs = useAppStore((state) => state.openShellTabs);
   const navigateShellPath = useAppStore((state) => state.navigateShellPath);
   const closeShellTab = useAppStore((state) => state.closeShellTab);
-  const { data: session } = useAppSession();
-  const role = session?.role ?? "member";
+  const { isDesktopRuntime } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
   const routeAccess = { role, mode: session?.mode ?? null };
 
   if (openShellTabs.length <= 1) {

@@ -20,7 +20,7 @@ import {
   normalizeServiceAddr,
 } from "@/lib/utils/service";
 import { getTopLevelRouteLabel } from "@/lib/app-shell/top-level-routes";
-import { useAppSession } from "@/hooks/useAppSession";
+import { resolveSessionRole, useAppSession } from "@/hooks/useAppSession";
 
 const DEFAULT_SERVICE_ADDR = "localhost:48760";
 
@@ -48,9 +48,9 @@ export function Header() {
   const { t } = useI18n();
   const [isToggling, setIsToggling] = useState(false);
   const [portInput, setPortInput] = useState("48760");
-  const { canManageService, mode } = useRuntimeCapabilities();
-  const { data: session } = useAppSession();
-  const role = session?.role ?? "member";
+  const { canManageService, isDesktopRuntime, mode } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
   const routeAccess = { role, mode: session?.mode ?? null };
 
   useEffect(() => {

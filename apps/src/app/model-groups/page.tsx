@@ -57,8 +57,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useDesktopPageActive } from "@/hooks/useDesktopPageActive";
-import { isAdminRole, useAppSession } from "@/hooks/useAppSession";
+import {
+  isAdminRole,
+  resolveSessionRole,
+  useAppSession,
+} from "@/hooks/useAppSession";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
+import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import { accountClient } from "@/lib/api/account-client";
 import { appClient } from "@/lib/api/app-client";
 import { getAppErrorMessage } from "@/lib/api/transport";
@@ -130,8 +135,10 @@ function groupDraftFromGroup(group: ModelGroup | null, sort: number) {
 export default function ModelGroupsPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const { data: session } = useAppSession();
-  const isAdminMode = isAdminRole(session?.role);
+  const { isDesktopRuntime } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
+  const isAdminMode = isAdminRole(role);
   const isPageActive = useDesktopPageActive("/model-groups/");
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [manageTab, setManageTab] = useState<ManageTab>("base");

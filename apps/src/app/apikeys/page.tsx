@@ -41,7 +41,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useApiKeys } from "@/hooks/useApiKeys";
-import { isAdminRole, useAppSession } from "@/hooks/useAppSession";
+import {
+  isAdminRole,
+  resolveSessionRole,
+  useAppSession,
+} from "@/hooks/useAppSession";
 import { useDesktopPageActive } from "@/hooks/useDesktopPageActive";
 import { useDeferredDesktopActivation } from "@/hooks/useDeferredDesktopActivation";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
@@ -186,9 +190,10 @@ function ApiKeyStatCard({
 export default function ApiKeysPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const { mode } = useRuntimeCapabilities();
-  const { data: session } = useAppSession();
-  const isAdminMode = isAdminRole(session?.role);
+  const { isDesktopRuntime, mode } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
+  const isAdminMode = isAdminRole(role);
   const showMemberOwnership = isAdminMode && session?.mode === "accounts";
   const serviceAddr = useAppStore((state) => state.serviceStatus.addr);
   const {

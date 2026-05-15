@@ -39,9 +39,10 @@ import {
 } from "@/components/ui/table";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
 import { useDashboardAdminUsageSummary } from "@/hooks/useDashboardAdminUsageSummary";
-import { useAppSession } from "@/hooks/useAppSession";
+import { resolveSessionRole, useAppSession } from "@/hooks/useAppSession";
 import { useMemberDashboardSummary } from "@/hooks/useMemberDashboardSummary";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
+import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import {
   formatCompactTokenAmount,
   formatPercent,
@@ -1388,12 +1389,14 @@ function MemberRecentLogsCard({
 
 export default function DashboardPage() {
   const { data: session, isLoading } = useAppSession();
+  const { isDesktopRuntime } = useRuntimeCapabilities();
+  const role = resolveSessionRole(session, isLoading, isDesktopRuntime);
 
   if (isLoading && !session) {
     return <DashboardInitialSkeleton />;
   }
 
-  if (session?.role === "member") {
+  if (role === "member") {
     return <MemberDashboard />;
   }
 

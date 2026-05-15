@@ -52,9 +52,14 @@ import {
 import { ConfirmDialog } from "@/components/modals/confirm-dialog";
 import { ModelCatalogModal } from "@/components/modals/model-catalog-modal";
 import { useDesktopPageActive } from "@/hooks/useDesktopPageActive";
-import { isAdminRole, useAppSession } from "@/hooks/useAppSession";
+import {
+  isAdminRole,
+  resolveSessionRole,
+  useAppSession,
+} from "@/hooks/useAppSession";
 import { useManagedModels } from "@/hooks/useManagedModels";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
+import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import { accountClient } from "@/lib/api/account-client";
 import { findBestMatchingModel } from "@/lib/api/model-catalog";
 import { useI18n } from "@/lib/i18n/provider";
@@ -110,8 +115,10 @@ function MiniStatBadge({
 
 export default function ModelsPage() {
   const { t } = useI18n();
-  const { data: session } = useAppSession();
-  const isAdminMode = isAdminRole(session?.role);
+  const { isDesktopRuntime } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
+  const isAdminMode = isAdminRole(role);
   const {
     models,
     isLoading,

@@ -21,12 +21,13 @@ import { buildStaticRouteUrl } from "@/lib/utils/static-routes";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { useI18n } from "@/lib/i18n/provider";
+import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import {
   getAllowedTopLevelRouteSections,
   getTopLevelRouteLabel,
   type TopLevelRoutePath,
 } from "@/lib/app-shell/top-level-routes";
-import { useAppSession } from "@/hooks/useAppSession";
+import { resolveSessionRole, useAppSession } from "@/hooks/useAppSession";
 import {
   memo,
   useCallback,
@@ -106,8 +107,9 @@ export function Sidebar() {
     currentShellPath,
     navigateShellPath,
   } = useAppStore();
-  const { data: session } = useAppSession();
-  const role = session?.role ?? "member";
+  const { isDesktopRuntime } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
   const routeAccess = useMemo(
     () => ({ role, mode: session?.mode ?? null }),
     [role, session?.mode],

@@ -14,7 +14,11 @@ import { useAppStore } from "@/lib/store/useAppStore";
 import { DEFAULT_CODEX_ORIGINATOR } from "@/lib/constants/codex";
 import { useDesktopPageActive } from "@/hooks/useDesktopPageActive";
 import { useDeferredDesktopActivation } from "@/hooks/useDeferredDesktopActivation";
-import { APP_SESSION_QUERY_KEY, useAppSession } from "@/hooks/useAppSession";
+import {
+  APP_SESSION_QUERY_KEY,
+  resolveSessionRole,
+  useAppSession,
+} from "@/hooks/useAppSession";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
 import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import {
@@ -2440,6 +2444,8 @@ function AdminSettingsPage() {
 
 export default function SettingsPage() {
   const { data: session, isLoading } = useAppSession();
+  const { isDesktopRuntime } = useRuntimeCapabilities();
+  const role = resolveSessionRole(session, isLoading, isDesktopRuntime);
   const { t } = useI18n();
   if (isLoading || !session) {
     return (
@@ -2448,7 +2454,7 @@ export default function SettingsPage() {
       </div>
     );
   }
-  if (session?.role === "member") {
+  if (role === "member") {
     return <MemberSettingsPage />;
   }
   return <AdminSettingsPage />;

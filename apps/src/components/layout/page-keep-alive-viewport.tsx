@@ -21,7 +21,8 @@ import {
   isTopLevelRouteAllowedForRole,
   toTopLevelRoutePath,
 } from "@/lib/app-shell/top-level-routes";
-import { useAppSession } from "@/hooks/useAppSession";
+import { resolveSessionRole, useAppSession } from "@/hooks/useAppSession";
+import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import { useI18n } from "@/lib/i18n/provider";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { cn } from "@/lib/utils";
@@ -112,8 +113,9 @@ export function PageKeepAliveViewport({
     (state) => state.syncShellPathFromLocation,
   );
   const pruneShellTabs = useAppStore((state) => state.pruneShellTabs);
+  const { isDesktopRuntime } = useRuntimeCapabilities();
   const { data: session, isLoading: isSessionLoading } = useAppSession();
-  const role = session?.role ?? "member";
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
   const routeAccess = useMemo(
     () => ({ role, mode: session?.mode ?? null }),
     [role, session?.mode],
