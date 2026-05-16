@@ -14,8 +14,6 @@ export const ENV_DESCRIPTION_MAP: Record<string, string> = {
     "控制 Images API 兼容入口内部使用的 Codex 主模型；默认 gpt-5.4-mini。",
   CODEXMANAGER_CODEX_IMAGE_TOOL_MODEL:
     "控制 Images API 兼容入口注入的图片工具模型；默认 gpt-image-2。",
-  CODEXMANAGER_COMPACT_API_PATH:
-    "控制上下文压缩请求使用的上游接口；可填 /v1/responses 或 /v1/chat/completions，默认 /v1/responses。",
   CODEXMANAGER_UPSTREAM_TOTAL_TIMEOUT_MS:
     "控制单次上游请求允许持续的最长时间，单位毫秒；超过后会主动结束请求并返回超时错误。",
   CODEXMANAGER_UPSTREAM_STREAM_TIMEOUT_MS:
@@ -192,8 +190,6 @@ export const DEFAULT_FREE_ACCOUNT_MAX_MODEL_OPTIONS = [
   "gpt-5.4-mini",
   "gpt-5.4",
 ] as const;
-
-export const DEFAULT_COMPACT_MODEL_OPTIONS = ["auto"] as const;
 
 export function formatFreeAccountModelLabel(
   value: string | null | undefined,

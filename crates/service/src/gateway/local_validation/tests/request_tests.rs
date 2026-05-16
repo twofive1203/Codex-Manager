@@ -234,24 +234,6 @@ fn gateway_blocked_path_patterns_support_custom_exact_and_prefix_rules() {
         .any(|pattern| gateway_blocked_path_matches("/v1/responses", pattern)));
 }
 
-#[test]
-fn routed_compact_chat_completions_keeps_configured_compact_model() {
-    let _guard = crate::test_env_guard();
-    let original = crate::gateway::current_compact_model();
-    crate::gateway::set_compact_model("gpt-5.4-mini").expect("set compact model");
-
-    assert_eq!(
-        compact_model_override_for_routed_compact("/v1/responses/compact").as_deref(),
-        Some("gpt-5.4-mini")
-    );
-    assert_eq!(
-        compact_model_override_for_routed_compact("/v1/chat/completions"),
-        None
-    );
-
-    crate::gateway::set_compact_model(original.as_str()).expect("restore compact model");
-}
-
 fn sample_request_metadata(prompt_cache_key: Option<&str>) -> ParsedRequestMetadata {
     ParsedRequestMetadata {
         prompt_cache_key: prompt_cache_key.map(str::to_string),

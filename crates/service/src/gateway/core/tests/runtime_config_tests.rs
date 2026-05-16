@@ -89,7 +89,6 @@ fn reload_from_env_updates_timeout_and_proxy() {
     let _client_id_guard = EnvGuard::set(ENV_TOKEN_EXCHANGE_CLIENT_ID, "client-id-123");
     let _issuer_guard = EnvGuard::set(ENV_TOKEN_EXCHANGE_ISSUER, "https://issuer.example");
     let _proxy_guard = EnvGuard::set(ENV_UPSTREAM_PROXY_URL, "socks5://127.0.0.1:7890");
-    let _compact_api_path_guard = EnvGuard::set(ENV_COMPACT_API_PATH, "/v1/chat/completions");
 
     reload_from_env();
 
@@ -111,8 +110,6 @@ fn reload_from_env_updates_timeout_and_proxy() {
         upstream_proxy_url().as_deref(),
         Some("socks5h://127.0.0.1:7890")
     );
-    assert_eq!(current_compact_api_path(), "/v1/chat/completions");
-    assert!(compact_uses_chat_completions_api());
 }
 
 /// 函数 `reload_from_env_defaults_limits_to_unbounded_codex_friendly_values`
@@ -139,7 +136,6 @@ fn reload_from_env_defaults_limits_to_unbounded_codex_friendly_values() {
     let _image_auto_inject_guard = EnvGuard::clear(ENV_CODEX_IMAGE_GENERATION_AUTO_INJECT_TOOL);
     let _image_main_model_guard = EnvGuard::clear(ENV_CODEX_IMAGE_MAIN_MODEL);
     let _image_tool_model_guard = EnvGuard::clear(ENV_CODEX_IMAGE_TOOL_MODEL);
-    let _compact_api_path_guard = EnvGuard::clear(ENV_COMPACT_API_PATH);
 
     reload_from_env();
 
@@ -156,21 +152,6 @@ fn reload_from_env_defaults_limits_to_unbounded_codex_friendly_values() {
     assert!(codex_image_generation_auto_inject_tool_enabled());
     assert_eq!(current_codex_image_main_model(), "gpt-5.4-mini");
     assert_eq!(current_codex_image_tool_model(), "gpt-image-2");
-    assert_eq!(current_compact_api_path(), "/v1/responses");
-    assert!(!compact_uses_chat_completions_api());
-}
-
-#[test]
-fn compact_api_path_normalizes_supported_values() {
-    assert_eq!(
-        normalize_compact_api_path("/v1/responses/").as_deref(),
-        Ok("/v1/responses")
-    );
-    assert_eq!(
-        normalize_compact_api_path(" /v1/chat/completions ").as_deref(),
-        Ok("/v1/chat/completions")
-    );
-    assert!(normalize_compact_api_path("/v1/responses/compact").is_err());
 }
 
 /// 函数 `parse_proxy_list_env_limits_to_five_entries`

@@ -48,8 +48,6 @@ export interface AppSettings {
   routeStrategyOptions: string[];
   freeAccountMaxModel: string;
   freeAccountMaxModelOptions: string[];
-  compactModel: string;
-  compactModelOptions: string[];
   modelForwardRules: string;
   accountMaxInflight: number;
   gatewayOriginator: string;

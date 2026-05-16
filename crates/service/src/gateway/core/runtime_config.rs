@@ -30,7 +30,6 @@ static CODEX_IMAGE_GENERATION_AUTO_INJECT_TOOL: AtomicBool =
 static UPSTREAM_PROXY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 static FREE_ACCOUNT_MAX_MODEL: OnceLock<RwLock<String>> = OnceLock::new();
 static COMPACT_MODEL: OnceLock<RwLock<String>> = OnceLock::new();
-static COMPACT_API_PATH: OnceLock<RwLock<String>> = OnceLock::new();
 static MODEL_FORWARD_RULES: OnceLock<RwLock<Vec<ModelForwardRule>>> = OnceLock::new();
 static CODEX_IMAGE_MAIN_MODEL: OnceLock<RwLock<String>> = OnceLock::new();
 static CODEX_IMAGE_TOOL_MODEL: OnceLock<RwLock<String>> = OnceLock::new();
@@ -54,7 +53,6 @@ const DEFAULT_TRACE_BODY_PREVIEW_MAX_BYTES: usize = 0;
 const DEFAULT_FRONT_PROXY_MAX_BODY_BYTES: usize = 0;
 const DEFAULT_FREE_ACCOUNT_MAX_MODEL: &str = "auto";
 const DEFAULT_COMPACT_MODEL: &str = "auto";
-const DEFAULT_COMPACT_API_PATH: &str = "/v1/responses";
 const DEFAULT_MODEL_FORWARD_RULES: &str = "";
 const DEFAULT_CODEX_IMAGE_MAIN_MODEL: &str = "gpt-5.4-mini";
 const DEFAULT_CODEX_IMAGE_TOOL_MODEL: &str = "gpt-image-2";
@@ -81,7 +79,6 @@ const ENV_PROXY_LIST: &str = "CODEXMANAGER_PROXY_LIST";
 const ENV_UPSTREAM_PROXY_URL: &str = "CODEXMANAGER_UPSTREAM_PROXY_URL";
 const ENV_FREE_ACCOUNT_MAX_MODEL: &str = "CODEXMANAGER_FREE_ACCOUNT_MAX_MODEL";
 const ENV_COMPACT_MODEL: &str = "CODEXMANAGER_COMPACT_MODEL";
-const ENV_COMPACT_API_PATH: &str = "CODEXMANAGER_COMPACT_API_PATH";
 const ENV_MODEL_FORWARD_RULES: &str = "CODEXMANAGER_MODEL_FORWARD_RULES";
 const ENV_ORIGINATOR: &str = "CODEXMANAGER_ORIGINATOR";
 const ENV_RESIDENCY_REQUIREMENT: &str = "CODEXMANAGER_RESIDENCY_REQUIREMENT";
@@ -606,15 +603,6 @@ pub(crate) fn current_compact_model_override() -> Option<String> {
     (!current.eq_ignore_ascii_case("auto")).then_some(current)
 }
 
-pub(crate) fn current_compact_api_path() -> String {
-    ensure_runtime_config_loaded();
-    crate::lock_utils::read_recover(compact_api_path_cell(), "compact_api_path").clone()
-}
-
-pub(crate) fn compact_uses_chat_completions_api() -> bool {
-    current_compact_api_path() == "/v1/chat/completions"
-}
-
 /// 函数 `current_model_forward_rules`
 ///
 /// 作者: gaohongshun
@@ -887,26 +875,6 @@ pub(crate) fn set_free_account_max_model(model: &str) -> Result<String, String> 
     Ok(normalized)
 }
 
-/// 函数 `set_compact_model`
-///
-/// 作者: gaohongshun
-///
-/// 时间: 2026-04-02
-///
-/// # 参数
-/// - model: 参数 model
-///
-/// # 返回
-/// 返回函数执行结果
-pub(crate) fn set_compact_model(model: &str) -> Result<String, String> {
-    ensure_runtime_config_loaded();
-    let normalized = normalize_model_slug_with_error(model, "compactModel")?;
-    std::env::set_var(ENV_COMPACT_MODEL, normalized.as_str());
-    let mut cached = crate::lock_utils::write_recover(compact_model_cell(), "compact_model");
-    *cached = normalized.clone();
-    Ok(normalized)
-}
-
 /// 函数 `set_model_forward_rules`
 ///
 /// 作者: gaohongshun
@@ -1175,24 +1143,6 @@ pub(super) fn reload_from_env() {
     *cached_compact_model = compact_model;
     drop(cached_compact_model);
 
-    let compact_api_path = env_non_empty(ENV_COMPACT_API_PATH)
-        .and_then(|value| {
-            normalize_compact_api_path(value.as_str())
-                .inspect_err(|err| {
-                    log::warn!(
-                        "event=gateway_invalid_compact_api_path source=env var={} err={}",
-                        ENV_COMPACT_API_PATH,
-                        err
-                    );
-                })
-                .ok()
-        })
-        .unwrap_or_else(|| DEFAULT_COMPACT_API_PATH.to_string());
-    let mut cached_compact_api_path =
-        crate::lock_utils::write_recover(compact_api_path_cell(), "compact_api_path");
-    *cached_compact_api_path = compact_api_path;
-    drop(cached_compact_api_path);
-
     let model_forward_rules = env_non_empty(ENV_MODEL_FORWARD_RULES)
         .map(|value| parse_model_forward_rules(value.as_str()))
         .transpose()
@@ -1408,21 +1358,6 @@ fn free_account_max_model_cell() -> &'static RwLock<String> {
 /// 返回函数执行结果
 fn compact_model_cell() -> &'static RwLock<String> {
     COMPACT_MODEL.get_or_init(|| RwLock::new(DEFAULT_COMPACT_MODEL.to_string()))
-}
-
-/// 函数 `compact_api_path_cell`
-///
-/// 作者: gaohongshun
-///
-/// 时间: 2026-05-16
-///
-/// # 参数
-/// 无
-///
-/// # 返回
-/// 返回函数执行结果
-fn compact_api_path_cell() -> &'static RwLock<String> {
-    COMPACT_API_PATH.get_or_init(|| RwLock::new(DEFAULT_COMPACT_API_PATH.to_string()))
 }
 
 /// 函数 `model_forward_rules_cell`
@@ -1859,19 +1794,6 @@ fn normalize_model_slug_with_error(raw: &str, field_name: &str) -> Result<String
         return Err(format!("{field_name} contains unsupported characters"));
     }
     Ok(normalized)
-}
-
-fn normalize_compact_api_path(raw: &str) -> Result<String, String> {
-    match raw
-        .trim()
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "/v1/responses" => Ok("/v1/responses".to_string()),
-        "/v1/chat/completions" => Ok("/v1/chat/completions".to_string()),
-        _ => Err("compactApiPath must be /v1/responses or /v1/chat/completions".to_string()),
-    }
 }
 
 /// 函数 `normalize_originator`

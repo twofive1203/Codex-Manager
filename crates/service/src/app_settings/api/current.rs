@@ -12,20 +12,19 @@ use super::author_links::{
 use super::{
     current_background_tasks_snapshot_value, current_close_to_tray_on_close_setting,
     current_codex_cli_guide_dismissed, current_env_overrides, current_gateway_account_max_inflight,
-    current_gateway_compact_model, current_gateway_free_account_max_model,
-    current_gateway_model_forward_rules, current_gateway_originator,
-    current_gateway_residency_requirement, current_gateway_sse_keepalive_interval_ms,
-    current_gateway_upstream_stream_timeout_ms, current_gateway_upstream_total_timeout_ms,
-    current_gateway_user_agent_version, current_lightweight_mode_on_close_to_tray_setting,
-    current_saved_service_addr, current_service_bind_mode, current_ui_appearance_preset,
-    current_ui_locale, current_ui_low_transparency_enabled, current_ui_theme,
-    current_update_auto_check_enabled, default_gateway_originator,
-    default_gateway_user_agent_version, env_override_catalog_value, env_override_reserved_keys,
-    env_override_unsupported_keys, residency_requirement_options, save_env_overrides_value,
-    save_persisted_app_setting, save_persisted_bool_setting, sync_runtime_settings_from_storage,
-    APP_SETTING_AUTHOR_SERVER_RECOMMENDATIONS_KEY, APP_SETTING_AUTHOR_SPONSORS_KEY,
-    APP_SETTING_CLOSE_TO_TRAY_ON_CLOSE_KEY, APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY,
-    APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY, APP_SETTING_GATEWAY_COMPACT_MODEL_KEY,
+    current_gateway_free_account_max_model, current_gateway_model_forward_rules,
+    current_gateway_originator, current_gateway_residency_requirement,
+    current_gateway_sse_keepalive_interval_ms, current_gateway_upstream_stream_timeout_ms,
+    current_gateway_upstream_total_timeout_ms, current_gateway_user_agent_version,
+    current_lightweight_mode_on_close_to_tray_setting, current_saved_service_addr,
+    current_service_bind_mode, current_ui_appearance_preset, current_ui_locale,
+    current_ui_low_transparency_enabled, current_ui_theme, current_update_auto_check_enabled,
+    default_gateway_originator, default_gateway_user_agent_version, env_override_catalog_value,
+    env_override_reserved_keys, env_override_unsupported_keys, residency_requirement_options,
+    save_env_overrides_value, save_persisted_app_setting, save_persisted_bool_setting,
+    sync_runtime_settings_from_storage, APP_SETTING_AUTHOR_SERVER_RECOMMENDATIONS_KEY,
+    APP_SETTING_AUTHOR_SPONSORS_KEY, APP_SETTING_CLOSE_TO_TRAY_ON_CLOSE_KEY,
+    APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY, APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY,
     APP_SETTING_GATEWAY_FREE_ACCOUNT_MAX_MODEL_KEY, APP_SETTING_GATEWAY_MODEL_FORWARD_RULES_KEY,
     APP_SETTING_GATEWAY_ORIGINATOR_KEY, APP_SETTING_GATEWAY_RESIDENCY_REQUIREMENT_KEY,
     APP_SETTING_GATEWAY_ROUTE_STRATEGY_KEY, APP_SETTING_GATEWAY_SSE_KEEPALIVE_INTERVAL_MS_KEY,
@@ -116,7 +115,6 @@ pub(super) fn current_app_settings_value(
     };
     let route_strategy = crate::gateway::current_route_strategy().to_string();
     let free_account_max_model = current_gateway_free_account_max_model();
-    let compact_model = current_gateway_compact_model();
     let model_forward_rules = current_gateway_model_forward_rules();
     let account_max_inflight = current_gateway_account_max_inflight();
     let gateway_originator = current_gateway_originator();
@@ -126,7 +124,6 @@ pub(super) fn current_app_settings_value(
     let gateway_residency_requirement = current_gateway_residency_requirement().unwrap_or_default();
     let free_account_max_model_options =
         load_free_account_max_model_options(&free_account_max_model);
-    let compact_model_options = load_compact_model_options();
     let upstream_proxy_url = crate::gateway::current_upstream_proxy_url();
     let upstream_stream_timeout_ms = current_gateway_upstream_stream_timeout_ms();
     let upstream_total_timeout_ms = current_gateway_upstream_total_timeout_ms();
@@ -183,7 +180,6 @@ pub(super) fn current_app_settings_value(
         &service_listen_mode,
         &route_strategy,
         &free_account_max_model,
-        &compact_model,
         &model_forward_rules,
         account_max_inflight,
         &gateway_originator,
@@ -228,11 +224,9 @@ pub(super) fn current_app_settings_value(
         "routeStrategy": route_strategy,
         "routeStrategyOptions": ["ordered", "balanced"],
         "freeAccountMaxModel": free_account_max_model,
-        "compactModel": compact_model,
         "modelForwardRules": model_forward_rules,
         "accountMaxInflight": account_max_inflight,
         "freeAccountMaxModelOptions": free_account_max_model_options,
-        "compactModelOptions": compact_model_options,
         "gatewayOriginator": gateway_originator,
         "gatewayOriginatorDefault": gateway_originator_default,
         "gatewayUserAgentVersion": gateway_user_agent_version,
@@ -376,23 +370,6 @@ fn collect_free_account_max_model_options(current: &str, cached: &[ModelInfo]) -
     items
 }
 
-fn load_compact_model_options() -> Vec<String> {
-    let cached = crate::apikey_models::read_model_options(false)
-        .map(|result| result.models)
-        .unwrap_or_default();
-    collect_compact_model_options(&cached)
-}
-
-fn collect_compact_model_options(cached: &[ModelInfo]) -> Vec<String> {
-    let mut items = vec!["auto".to_string()];
-    for slug in cached.iter().map(|item| item.slug.trim().to_string()) {
-        if !slug.is_empty() && !items.iter().any(|item| item == &slug) {
-            items.push(slug);
-        }
-    }
-    items
-}
-
 /// 函数 `is_free_account_max_model_option`
 ///
 /// 作者: gaohongshun
@@ -456,7 +433,6 @@ fn persist_current_snapshot(
     service_listen_mode: &str,
     route_strategy: &str,
     free_account_max_model: &str,
-    compact_model: &str,
     model_forward_rules: &str,
     account_max_inflight: usize,
     gateway_originator: &str,
@@ -501,7 +477,6 @@ fn persist_current_snapshot(
         APP_SETTING_GATEWAY_FREE_ACCOUNT_MAX_MODEL_KEY,
         Some(free_account_max_model),
     );
-    let _ = save_persisted_app_setting(APP_SETTING_GATEWAY_COMPACT_MODEL_KEY, Some(compact_model));
     let _ = save_persisted_app_setting(
         APP_SETTING_GATEWAY_MODEL_FORWARD_RULES_KEY,
         if model_forward_rules.trim().is_empty() {
@@ -594,8 +569,8 @@ fn normalize_market_mode(raw: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_compact_model_options, collect_free_account_max_model_options,
-        normalize_market_mode, DEFAULT_FREE_ACCOUNT_MAX_MODEL_OPTIONS,
+        collect_free_account_max_model_options, normalize_market_mode,
+        DEFAULT_FREE_ACCOUNT_MAX_MODEL_OPTIONS,
     };
     use codexmanager_core::rpc::types::ModelInfo;
 
@@ -671,36 +646,6 @@ mod tests {
                 "gpt-5".to_string(),
                 "gpt-5.1-codex".to_string(),
                 "gpt-5.2".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn compact_model_options_reuse_managed_model_catalog_only() {
-        let actual = collect_compact_model_options(&[
-            ModelInfo {
-                slug: "gpt-5.4-mini".to_string(),
-                display_name: "gpt-5.4-mini".to_string(),
-                ..Default::default()
-            },
-            ModelInfo {
-                slug: "gpt-5.5".to_string(),
-                display_name: "gpt-5.5".to_string(),
-                ..Default::default()
-            },
-            ModelInfo {
-                slug: "gpt-5.4-mini".to_string(),
-                display_name: "gpt-5.4-mini".to_string(),
-                ..Default::default()
-            },
-        ]);
-
-        assert_eq!(
-            actual,
-            vec![
-                "auto".to_string(),
-                "gpt-5.4-mini".to_string(),
-                "gpt-5.5".to_string(),
             ]
         );
     }
