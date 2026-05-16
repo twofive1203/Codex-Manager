@@ -163,6 +163,7 @@ fn env_override_effect_scope(key: &str) -> &'static str {
         | "CODEXMANAGER_CODEX_IMAGE_GENERATION_ENABLED"
         | "CODEXMANAGER_CODEX_IMAGE_MAIN_MODEL"
         | "CODEXMANAGER_CODEX_IMAGE_TOOL_MODEL"
+        | "CODEXMANAGER_COMPACT_API_PATH"
         | "CODEXMANAGER_FRONT_PROXY_MAX_BODY_BYTES"
         | "CODEXMANAGER_GATEWAY_BLOCKED_PATHS"
         | "CODEXMANAGER_HTTP_BRIDGE_OUTPUT_TEXT_LIMIT_BYTES"
@@ -288,6 +289,27 @@ mod tests {
         );
         assert_eq!(
             image_enabled
+                .get("effectScope")
+                .and_then(|value| value.as_str()),
+            Some(ENV_OVERRIDE_EFFECT_SCOPE_REQUEST_SEMANTIC)
+        );
+
+        let compact_api_path = catalog
+            .iter()
+            .find(|item| {
+                item.get("key").and_then(|value| value.as_str())
+                    == Some("CODEXMANAGER_COMPACT_API_PATH")
+            })
+            .expect("compact api path catalog item");
+
+        assert_eq!(
+            compact_api_path
+                .get("riskLevel")
+                .and_then(|value| value.as_str()),
+            Some("high")
+        );
+        assert_eq!(
+            compact_api_path
                 .get("effectScope")
                 .and_then(|value| value.as_str()),
             Some(ENV_OVERRIDE_EFFECT_SCOPE_REQUEST_SEMANTIC)
